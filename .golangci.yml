@@ -1,0 +1,61 @@
+# Written for golangci-lint v1.x; v2 needs `version: "2"` and a reshaped file.
+
+run:
+  timeout: 3m
+
+linters:
+  enable:
+    # Defaults (errcheck, govet, ineffassign, staticcheck, unused) stay on.
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - lll
+    - misspell
+    - nolintlint
+    - revive
+    - sqlclosecheck
+    - unconvert
+    - usestdlibvars
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+  revive:
+    rules:
+      - name: exported
+      - name: error-strings
+      - name: context-as-argument
+      - name: indent-error-flow
+  lll:
+    line-length: 120
+    tab-width: 4
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+
+issues:
+  # 0 means no cap: a finding golangci-lint hides is a finding nobody fixes.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Rewritten by `make oapicodegen`, so fixes here do not survive.
+    - path: internal/api/server/oapicodegen/
+      linters:
+        - revive
+        - misspell
+        - lll
+    # Error-path tests discard a nil response, which bodyclose cannot see is safe.
+    - path: _test\.go
+      linters:
+        - bodyclose
+    # Doc comments earn their keep in pkg/, meant to be lifted into other services; not in internal/.
+    - path: internal/
+      text: "^exported:"
+      linters:
+        - revive
+  # v1 drops revive's doc-comment findings by default, which would make the rule above a no-op.
+  include:
+    - EXC0012
+    - EXC0013
+    - EXC0014
+    - EXC0015

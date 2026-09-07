@@ -1,0 +1,42 @@
+# Secrets & config
+# Mounted at runtime instead: anything copied here stays readable in the image layer forever.
+.env
+configs/config.yaml
+
+# Version control
+# Can reach hundreds of MB, and the build never reads it.
+.git
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+logs/
+
+# Go binaries & build output
+# Host builds, useless in the image and wrong architecture anyway.
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test & coverage
+*.test
+*.out
+coverage.*
+
+# Docs & build files
+# Not needed to compile; excluding them keeps a README edit from invalidating the build cache.
+Dockerfile
+.dockerignore
+Makefile
+README.md
+
+# OS
+.DS_Store
+Thumbs.db

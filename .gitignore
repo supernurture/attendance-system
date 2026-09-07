@@ -1,0 +1,35 @@
+# IDE
+.idea/
+.vscode/
+
+# Secrets & config
+.env
+configs/config.yaml
+
+# Logs
+logs/
+
+# Go binaries & build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test & coverage
+*.test
+*.out
+coverage.*
+
+# Go workspace
+go.work
+go.work.sum
+
+# Vendored dependencies
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db

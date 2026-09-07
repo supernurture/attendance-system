@@ -1,0 +1,67 @@
+app:
+  name: go-template
+  version: 1.0.0
+  env: development # development, staging, or production; only production sends HSTS
+
+server:
+  mode: debug # test, debug, or release; release drops gin's route dump and startup warnings
+  port: 8080
+  timeout: 30s # deadline for a handler and everything it calls; the write timeout is this plus 5s
+  cors_origins: [] # e.g. ["https://app.example.com"]; empty grants no browser origin, ["*"] rules out cookies
+  trusted_proxies: [] # e.g. ["10.0.0.0/8"]; empty trusts only the direct peer for client IPs
+  max_body_bytes: 1048576 # 1 MiB; 0 uses the middleware default
+
+databases:
+  postgres:
+    example:
+      host: localhost
+      port: 5432
+      user: postgres
+      password: postgres
+      database: example
+      opts: sslmode=disable # sslmode=require in production
+      max_open_conns: 25 # 0 means unlimited, which lets a traffic spike exhaust the database
+      max_idle_conns: 5 # set far below max_open_conns and the pool reopens connections under load
+      conn_max_lifetime: 30m # recycles connections, so a failover or rotated credential is picked up
+  # sql_server:
+  #   example:
+  #     host: localhost
+  #     port: 1433
+  #     user: sa
+  #     password:
+  #     database: example
+  #     opts: encrypt=disable
+  #     max_open_conns: 25
+  #     max_idle_conns: 5
+  #     conn_max_lifetime: 30m
+
+redis:
+  example:
+    host: localhost
+    port: 6379
+    user:
+    password:
+    db: 0
+    tls: false # true for managed Redis with in-transit encryption
+    pool_size: 0 # 0 keeps the driver default
+    min_idle_conns: 0 # 0 opens nothing ahead of time; raise it to spare the first request a handshake
+    conn_max_lifetime: 30m
+
+# Upstream HTTP services
+services:
+  example:
+    base_url: https://api.example.com
+    endpoints:
+      inquiry: /v1/inquiry
+    timeout: 10s # keep it under server.timeout, or the request dies before this ever fires
+    auth:
+      user:
+      password:
+
+logger:
+  path: ./logs
+  level: INFO # DEBUG, INFO, WARN, or ERROR
+  rotation_pattern: daily # daily, or size-based via rotation_size_mb
+  rotation_size_mb: 20 # only consulted when rotation_pattern is not daily
+  retention_days: 1 # enough for local work; production usually wants weeks
+  console: true # also print JSON logs to stdout

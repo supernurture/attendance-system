@@ -1,0 +1,154 @@
+openapi: 3.0.3
+info:
+  title: Example API
+  description: >-
+    A worked example to copy when you add your own module. Edit this spec, run `make oapicodegen`,
+    then implement the generated interface under internal/api/server/modules/ and mount it in router.go.
+    Delete this module once yours replaces it.
+  version: 1.0.0
+tags:
+  - name: example
+paths:
+  /example/visits:
+    get:
+      operationId: getExampleVisits
+      tags:
+        - example
+      summary: Get example visits
+      description: >-
+        The smallest shape to copy: nothing to validate, so the handler only forwards to the service
+        and the service makes the one dependency call.
+      responses:
+        '200':
+          description: The visit counter after this request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetExampleVisitsResponse'
+  /example/notes:
+    get:
+      operationId: listExampleNotes
+      tags:
+        - example
+      summary: List example notes
+      description: >-
+        Shows where input rules belong: the service checks limit, not the handler, so a worker or CLI
+        calling the same method gets the same rule.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of notes to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: The notes, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Note'
+        '400':
+          description: >-
+            A caller mistake. The service returns a ValidationError and the handler maps it here;
+            every other error stays a 500 so internals are never leaked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: createExampleNote
+      tags:
+        - example
+      summary: Create an example note
+      description: >-
+        The write path to copy: the handler only translates the generated request, the service owns
+        the rules, and the repository writes the note and its audit row in one transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNoteRequest'
+      responses:
+        '201':
+          description: The stored note.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Note'
+        '400':
+          description: >-
+            A caller mistake. The service returns a ValidationError and the handler maps it here;
+            every other error stays a 500 so internals are never leaked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    GetExampleVisitsResponse:
+      type: object
+      required:
+        - visits
+      properties:
+        visits:
+          type: integer
+          format: int64
+          description: Number of times this endpoint has been called.
+          example: 1
+    Note:
+      type: object
+      required:
+        - id
+        - title
+        - body
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Generated identifier.
+          example: 1
+        title:
+          type: string
+          description: Short label for the note.
+          example: First note
+        body:
+          type: string
+          description: Free-form contents.
+          example: Written from the example module.
+        created_at:
+          type: string
+          format: date-time
+          description: When the note was stored.
+    CreateNoteRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Short label for the note.
+          example: First note
+        body:
+          type: string
+          maxLength: 4000
+          description: Free-form contents.
+          example: Written from the example module.
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: What went wrong.
+          example: title is required

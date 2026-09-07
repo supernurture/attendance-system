@@ -1,0 +1,5 @@
+package: oapicodegen
+generate:
+  gin-server: true
+  strict-server: true
+  models: true

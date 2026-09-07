@@ -1,0 +1,33 @@
+openapi: 3.0.3
+info:
+  title: Health API
+  description: Liveness probe for the server.
+  version: 1.0.0
+tags:
+  - name: health
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags:
+        - health
+      summary: Get health
+      description: Reports whether the server is up and able to serve requests.
+      responses:
+        '200':
+          description: The server is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetHealthResponse'
+components:
+  schemas:
+    GetHealthResponse:
+      type: object
+      required:
+        - condition
+      properties:
+        condition:
+          type: string
+          description: Health condition of the server.
+          example: Healthy
