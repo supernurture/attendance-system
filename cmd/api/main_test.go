@@ -15,14 +15,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/supernurture/go-template/internal/config"
-	"github.com/supernurture/go-template/internal/container"
+	"attendance-system/internal/config"
+	"attendance-system/internal/container"
+	"attendance-system/pkg/logger"
 )
 
 func validConfig(port int) string {
 	return fmt.Sprintf(`
 app:
-  name: template
+  name: attendance-system
   version: 1.0.0
   env: development
 server:
@@ -32,7 +33,28 @@ server:
   trusted_proxies: []
 logger:
   level: INFO
+storage:
+  endpoint: http://localhost:9000
+  region: auto
+  bucket: attendance
+  access_key_id: minioadmin
+  secret_access_key: minioadmin
+  presign_ttl: 5m
 `, port)
+}
+
+func stubContainer(t *testing.T) {
+	t.Helper()
+
+	log, err := logger.New(logger.Config{ServiceName: "test", Path: t.TempDir()})
+	if err != nil {
+		t.Fatalf("logger.New: %v", err)
+	}
+	t.Cleanup(func() { _ = log.Close() })
+
+	swap(t, &newContainer, func(*config.Config) (*container.Container, error) {
+		return &container.Container{Logger: log}, nil
+	})
 }
 
 func writeConfig(t *testing.T, contents string) {
@@ -128,6 +150,8 @@ func TestRunReportsUnbuildableLogger(t *testing.T) {
 }
 
 func TestRunReportsRouterFailure(t *testing.T) {
+	stubContainer(t)
+
 	port, listener := freePort(t)
 	_ = listener.Close()
 	writeConfig(t, validConfig(port))
@@ -143,6 +167,8 @@ func TestRunReportsRouterFailure(t *testing.T) {
 }
 
 func TestRunReportsUnavailablePort(t *testing.T) {
+	stubContainer(t)
+
 	port, listener := freePort(t)
 	defer func() { _ = listener.Close() }()
 	writeConfig(t, validConfig(port))
@@ -154,6 +180,8 @@ func TestRunReportsUnavailablePort(t *testing.T) {
 }
 
 func TestRunReportsServeFailure(t *testing.T) {
+	stubContainer(t)
+
 	port, listener := freePort(t)
 	_ = listener.Close()
 	writeConfig(t, validConfig(port))
@@ -174,6 +202,8 @@ func TestRunReportsServeFailure(t *testing.T) {
 }
 
 func TestRunReportsDependencyCloseFailure(t *testing.T) {
+	stubContainer(t)
+
 	port, listener := freePort(t)
 	_ = listener.Close()
 	writeConfig(t, validConfig(port))
@@ -193,6 +223,8 @@ func TestRunReportsDependencyCloseFailure(t *testing.T) {
 }
 
 func TestRunReportsShutdownTimeout(t *testing.T) {
+	stubContainer(t)
+
 	port, listener := freePort(t)
 	_ = listener.Close()
 	writeConfig(t, validConfig(port))
@@ -224,6 +256,8 @@ func TestRunReportsShutdownTimeout(t *testing.T) {
 }
 
 func TestRunServesUntilContextIsCancelled(t *testing.T) {
+	stubContainer(t)
+
 	port, listener := freePort(t)
 	_ = listener.Close()
 	writeConfig(t, validConfig(port))

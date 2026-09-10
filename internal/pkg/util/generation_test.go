@@ -7,22 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestGenerateBasicAuth(t *testing.T) {
-	cases := []struct {
-		user, password, want string
-	}{
-		{"admin", "s4cr4t", "Basic YWRtaW46czRjcjR0"},
-		{"", "s4cr4t", ""},
-		{"admin", "", ""},
-		{"", "", ""},
-	}
-	for _, test := range cases {
-		if got := GenerateBasicAuth(test.user, test.password); got != test.want {
-			t.Errorf("GenerateBasicAuth(%q, %q) = %q, want %q", test.user, test.password, got, test.want)
-		}
-	}
-}
-
 func TestGenerateUniqueID(t *testing.T) {
 	for _, length := range []int{2, 20, maxIDLength} {
 		id, err := GenerateUniqueID(length)

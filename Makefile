@@ -1,17 +1,17 @@
 SHELL   := bash
 BIN_DIR := bin
 
-# Every subdir of cmd/ is a buildable app. APP selects one (default: first).
+# Every subdir of cmd/ is an app; APP picks one.
 APPS := $(notdir $(wildcard cmd/*))
 APP  ?= $(firstword $(APPS))
 
-IMAGE ?= go-template
+IMAGE ?= attendance-system
 PORT  ?= 8080
 
 # Pinned: .golangci.yml uses the v1 config format, which v2 does not read.
 GOLANGCI_VERSION ?= 1.64.8
 
-.PHONY: help run test cover cover-gaps vet lint lint-install fmt check tidy build build-all clean oapicodegen docker-build docker-run
+.PHONY: help run test cover cover-gaps vet lint lint-install fmt fmt-check check tidy build build-all clean migrate-up migrate-down migrate-status oapicodegen docker-build docker-run
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n", $$1, $$2}'
@@ -23,12 +23,11 @@ run: ## Run an app (APP=name, default $(APP))
 test: ## Run tests with race detector
 	go test -race ./...
 
-# Generated contracts are excluded: `make oapicodegen` overwrites any fix made there.
+# oapicodegen output is excluded: `make oapicodegen` overwrites any fix made there.
 COVERPKG = $(shell go list ./... | grep -v oapicodegen | paste -sd,)
 
-# -coverpkg credits code reached through another package's tests, at the cost of a noisy
-# per-package percentage on every line; sed drops those, the merged total is what counts.
-# pipefail inline, not .SHELLFLAGS: make 3.81 ignores that variable and would hide a failure.
+# -coverpkg credits code reached via another package's tests; sed drops the noisy per-package
+# lines. pipefail inline because make 3.81 ignores .SHELLFLAGS and would hide a failure.
 COVERTEST = set -o pipefail; go test -coverpkg=$(COVERPKG) -coverprofile=coverage.out ./... | sed 's/coverage:.*//'
 
 cover: ## Run tests and open coverage report
@@ -49,13 +48,20 @@ lint: ## golangci-lint, configured by .golangci.yml (see lint-install)
 lint-install: ## Install the golangci-lint version .golangci.yml is written for
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v$(GOLANGCI_VERSION)
 
-fmt: ## Format and fix imports (go install golang.org/x/tools/cmd/goimports@latest)
-	goimports -w .
+fmt: ## Format and fix imports in place
+	go tool goimports -w .
+
+# CI runs this, not fmt: a check that rewrites your files can never fail.
+fmt-check: ## Fail if anything is unformatted, without rewriting it
+	@unformatted=$$(go tool goimports -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "not formatted (run make fmt):"; echo "$$unformatted"; exit 1; \
+	fi
 
 tidy: ## Sync go.mod/go.sum
 	go mod tidy
 
-check: fmt vet lint test ## Format, vet, lint, test
+check: fmt-check vet lint test ## Verify formatting, vet, lint, test
 
 EXE := $(shell go env GOEXE)
 
@@ -78,6 +84,15 @@ build-all: ## Cross-compile every app for linux, windows, darwin (amd64 + arm64)
 
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) coverage.out
+
+migrate-up: ## Apply every pending migration
+	go run ./cmd/migrate up
+
+migrate-down: ## Roll back the newest migration
+	go run ./cmd/migrate down
+
+migrate-status: ## Show which migrations have run
+	go run ./cmd/migrate status
 
 oapicodegen: ## Generate OpenAPI server code
 	bash scripts/oapicodegen.sh

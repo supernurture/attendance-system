@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +10,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const validConfig = `
+const configWithoutStorage = `
 app:
   name: template
   version: 1.0.0
@@ -25,10 +24,24 @@ logger:
   level: INFO
 `
 
-func service(baseURL, endpoints string) string {
-	return fmt.Sprintf("services:\n  upstream:\n    base_url: %s\n    endpoints:\n      %s\n    timeout: 10s\n",
-		baseURL, endpoints)
-}
+const validStorage = `
+storage:
+  endpoint: http://localhost:9000
+  region: auto
+  bucket: attendance
+  access_key_id: minioadmin
+  secret_access_key: minioadmin
+  presign_ttl: 5m
+`
+
+const incompleteStorage = `
+storage:
+  endpoint: not-a-url
+  region: auto
+  bucket: attendance
+`
+
+const validConfig = configWithoutStorage + validStorage
 
 func chdirTemp(t *testing.T) {
 	t.Helper()
@@ -84,11 +97,13 @@ func TestQuickstartExamplesLoad(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if len(cfg.Databases.Postgres) != 1 || len(cfg.Redis) != 1 || len(cfg.Databases.SQLServer) != 0 {
-		t.Errorf("postgres = %v, redis = %v, sql_server = %v; want one postgres, one redis, no sql server",
-			cfg.Databases.Postgres, cfg.Redis, cfg.Databases.SQLServer)
+	if len(cfg.Databases.Postgres) != 1 || len(cfg.Redis) != 1 {
+		t.Errorf("postgres = %v, redis = %v; want one of each", cfg.Databases.Postgres, cfg.Redis)
 	}
-	if got := cfg.Databases.Postgres["example"].User; got != "postgres" {
+	if cfg.Storage.Bucket == "" {
+		t.Errorf("storage = %+v, want the example to configure a bucket", cfg.Storage)
+	}
+	if got := cfg.Databases.Postgres["primary"].User; got != "postgres" {
 		t.Errorf("postgres user = %q, want %q from .env.example", got, "postgres")
 	}
 }
@@ -111,8 +126,8 @@ func TestLoad(t *testing.T) {
 	if got := cfg.Server.TrustedProxies; len(got) != 1 || got[0] != "10.0.0.0/8" {
 		t.Errorf("server.trusted_proxies = %v, want [10.0.0.0/8]", got)
 	}
-	if len(cfg.Services) != 0 || len(cfg.Databases.Postgres) != 0 {
-		t.Errorf("services = %v, postgres = %v, want both empty", cfg.Services, cfg.Databases.Postgres)
+	if len(cfg.Databases.Postgres) != 0 {
+		t.Errorf("postgres = %v, want it absent", cfg.Databases.Postgres)
 	}
 }
 
@@ -210,19 +225,14 @@ func TestLoadErrors(t *testing.T) {
 			want:  "invalid config",
 		},
 		{
-			name:  "service base_url is not a url",
-			files: map[string]string{configFile(): validConfig + service("api.example.com", "inquiry: /v1/inquiry")},
-			want:  "BaseURL",
+			name:  "storage block present but incomplete",
+			files: map[string]string{configFile(): configWithoutStorage + incompleteStorage},
+			want:  "Endpoint",
 		},
 		{
-			name:  "service has no endpoints",
-			files: map[string]string{configFile(): validConfig + service("https://api.example.com", "{}")},
-			want:  "Endpoints",
-		},
-		{
-			name:  "service endpoint has an empty path",
-			files: map[string]string{configFile(): validConfig + service("https://api.example.com", `inquiry: ""`)},
-			want:  "Endpoints[inquiry]",
+			name:  "storage block missing entirely",
+			files: map[string]string{configFile(): configWithoutStorage},
+			want:  "Storage",
 		},
 	}
 

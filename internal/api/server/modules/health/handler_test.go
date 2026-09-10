@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	healthcontract "github.com/supernurture/go-template/internal/api/server/oapicodegen/health"
+	healthcontract "attendance-system/internal/api/server/oapicodegen/health"
 )
 
 func TestGetHealth(t *testing.T) {

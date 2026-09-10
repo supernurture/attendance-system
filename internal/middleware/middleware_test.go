@@ -12,8 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/supernurture/go-template/internal/config"
-	"github.com/supernurture/go-template/pkg/logger"
+	"attendance-system/internal/config"
+	"attendance-system/pkg/logger"
 )
 
 func newRouter(t *testing.T, cfg *config.Config) *gin.Engine {
@@ -283,4 +283,23 @@ func TestDefaultChainUnset(t *testing.T) {
 			t.Errorf("status = %d, want 413 past the %d byte default", recorder.Code, defaultMaxBodyBytes)
 		}
 	})
+}
+
+func TestRequestIDFallsBackWhenGenerationFails(t *testing.T) {
+	orig := generateID
+	generateID = func(int) (string, error) { return "", errors.New("no entropy") }
+	t.Cleanup(func() { generateID = orig })
+
+	router := gin.New()
+	router.Use(RequestID())
+	router.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if got := rec.Header().Get(requestIDHeader); got == "" {
+		t.Error("no request id was set despite the fallback")
+	} else if !validRequestID(got) {
+		t.Errorf("fallback request id %q is not a valid one", got)
+	}
 }

@@ -7,20 +7,19 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
-	"github.com/supernurture/go-template/internal/config"
-	"github.com/supernurture/go-template/internal/httpclient"
-	"github.com/supernurture/go-template/pkg/database"
-	"github.com/supernurture/go-template/pkg/logger"
-	"github.com/supernurture/go-template/pkg/redis"
+	"attendance-system/internal/config"
+	"attendance-system/internal/pkg/storage"
+	"attendance-system/pkg/database"
+	"attendance-system/pkg/logger"
+	"attendance-system/pkg/redis"
 )
 
 // Container holds shared dependencies, keyed by their config name.
 type Container struct {
-	Logger     *logger.Logger
-	HTTPClient *httpclient.HTTPClient
-	Postgres   map[string]*gorm.DB
-	SQLServer  map[string]*gorm.DB
-	Redis      map[string]*goredis.Client
+	Logger   *logger.Logger
+	Postgres map[string]*gorm.DB
+	Redis    map[string]*goredis.Client
+	Storage  *storage.Storage
 
 	shutdowns []func() error
 }
@@ -33,11 +32,9 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	}
 
 	deps := &Container{
-		Logger:     log,
-		HTTPClient: httpclient.NewHTTPClient(cfg, log),
-		Postgres:   make(map[string]*gorm.DB, len(cfg.Databases.Postgres)),
-		SQLServer:  make(map[string]*gorm.DB, len(cfg.Databases.SQLServer)),
-		Redis:      make(map[string]*goredis.Client, len(cfg.Redis)),
+		Logger:   log,
+		Postgres: make(map[string]*gorm.DB, len(cfg.Databases.Postgres)),
+		Redis:    make(map[string]*goredis.Client, len(cfg.Redis)),
 
 		shutdowns: []func() error{log.Close},
 	}
@@ -61,9 +58,9 @@ func (c *Container) Close() error {
 }
 
 var (
-	newPostgres  = database.NewPostgres
-	newSQLServer = database.NewSQLServer
-	newRedis     = redis.New
+	newPostgres = database.NewPostgres
+	newRedis    = redis.New
+	newStorage  = storage.New
 )
 
 func (c *Container) open(cfg *config.Config) error {
@@ -77,19 +74,6 @@ func (c *Container) open(cfg *config.Config) error {
 			return fmt.Errorf("open postgres %q: %w", name, err)
 		}
 		c.Postgres[name] = conn
-		c.shutdowns = append(c.shutdowns, closeGorm(conn))
-	}
-
-	for name, db := range cfg.Databases.SQLServer {
-		conn, err := newSQLServer(db.Host, db.Port, db.User, db.Password, db.Database, db.Opts, database.PoolConfig{
-			MaxOpenConns:    db.MaxOpenConns,
-			MaxIdleConns:    db.MaxIdleConns,
-			ConnMaxLifetime: db.ConnMaxLifetime,
-		})
-		if err != nil {
-			return fmt.Errorf("open sql server %q: %w", name, err)
-		}
-		c.SQLServer[name] = conn
 		c.shutdowns = append(c.shutdowns, closeGorm(conn))
 	}
 
@@ -107,6 +91,20 @@ func (c *Container) open(cfg *config.Config) error {
 		c.Redis[name] = client
 		c.shutdowns = append(c.shutdowns, client.Close)
 	}
+
+	store, err := newStorage(storage.Config{
+		Endpoint:        cfg.Storage.Endpoint,
+		Region:          cfg.Storage.Region,
+		Bucket:          cfg.Storage.Bucket,
+		AccessKeyID:     cfg.Storage.AccessKeyID,
+		SecretAccessKey: cfg.Storage.SecretAccessKey,
+		ForcePathStyle:  cfg.Storage.ForcePathStyle,
+		PresignTTL:      cfg.Storage.PresignTTL,
+	})
+	if err != nil {
+		return fmt.Errorf("open storage: %w", err)
+	}
+	c.Storage = store
 
 	return nil
 }
