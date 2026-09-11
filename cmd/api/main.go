@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/supernurture/go-template/internal/api/server"
-	"github.com/supernurture/go-template/internal/config"
-	"github.com/supernurture/go-template/internal/container"
+	"attendance-system/internal/api/server"
+	"attendance-system/internal/config"
+	"attendance-system/internal/container"
 )
 
 const (
@@ -25,10 +25,11 @@ const (
 )
 
 var (
-	exit      = os.Exit
-	listen    = net.Listen
-	newRouter = server.NewRouter
-	closeDeps = func(deps *container.Container) error { return deps.Close() }
+	exit         = os.Exit
+	listen       = net.Listen
+	newRouter    = server.NewRouter
+	newContainer = container.NewContainer
+	closeDeps    = func(deps *container.Container) error { return deps.Close() }
 
 	shutdownTimeout = 8 * time.Second
 )
@@ -48,7 +49,7 @@ func run(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	deps, err := container.NewContainer(cfg)
+	deps, err := newContainer(cfg)
 	if err != nil {
 		return err
 	}

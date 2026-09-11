@@ -27,6 +27,36 @@ type PoolConfig struct {
 	ConnMaxLifetime time.Duration
 }
 
+// TLSWarning says how opts falls short of an authenticated TLS connection, or "" if it does not.
+func TLSWarning(opts string) string {
+	switch sslMode(opts) {
+	case "verify-full":
+		return ""
+	case "verify-ca":
+		return "verifies the CA but not the hostname, so a valid certificate issued to a " +
+			"different host is accepted; use sslmode=verify-full"
+	case "require":
+		return "is encrypted but does not verify the server certificate, so a redirected " +
+			"connection can be read by whoever redirected it; use sslmode=verify-full"
+	case "":
+		return "does not set sslmode, so libpq defaults to prefer and falls back to cleartext " +
+			"without saying so; use sslmode=verify-full"
+	default:
+		return "is not encrypted; credentials and query data cross the network in cleartext"
+	}
+}
+
+// sslMode returns the sslmode in opts, or "" when absent. Last one wins, as libpq does.
+func sslMode(opts string) string {
+	mode := ""
+	for field := range strings.FieldsSeq(opts) {
+		if value, found := strings.CutPrefix(field, "sslmode="); found {
+			mode = value
+		}
+	}
+	return mode
+}
+
 func configurePool(db *gorm.DB, pool PoolConfig) error {
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -54,13 +84,4 @@ func ping(db *gorm.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return sqlDB.PingContext(ctx)
-}
-
-func hasTLS(opts string, secureVals ...string) bool {
-	for _, value := range secureVals {
-		if strings.Contains(opts, value) {
-			return true
-		}
-	}
-	return false
 }

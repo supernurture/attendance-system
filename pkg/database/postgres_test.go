@@ -2,6 +2,7 @@ package database
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -59,5 +60,19 @@ func TestNewPostgresUnreachable(t *testing.T) {
 	if _, err := NewPostgres(
 		"127.0.0.2", 2, "user", "password", "database", "sslmode=disable connect_timeout=2", PoolConfig{}); err == nil {
 		t.Fatal("expected connection error")
+	}
+}
+
+func TestPostgresDSNQuotesEveryValue(t *testing.T) {
+	dsn := PostgresDSN("db.internal", 5432, "app", "x sslmode=disable", "attendance", "sslmode=require")
+
+	if strings.Contains(dsn, "password='x' sslmode=disable") {
+		t.Fatalf("password broke out of its field: %s", dsn)
+	}
+	if want := `password='x sslmode=disable'`; !strings.Contains(dsn, want) {
+		t.Errorf("dsn = %s, want it to contain %s", dsn, want)
+	}
+	if !strings.HasSuffix(dsn, "sslmode=require") {
+		t.Errorf("dsn = %s, want opts appended verbatim", dsn)
 	}
 }

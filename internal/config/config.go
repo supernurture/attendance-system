@@ -14,12 +14,12 @@ import (
 
 // Config struct defines the structure of the configuration file.
 type Config struct {
-	App       App                `mapstructure:"app"`
-	Server    Server             `mapstructure:"server"`
-	Databases Databases          `mapstructure:"databases"`
-	Redis     map[string]Redis   `mapstructure:"redis"     validate:"omitempty,dive"`
-	Services  map[string]Service `mapstructure:"services"  validate:"omitempty,dive"`
-	Logger    Logger             `mapstructure:"logger"`
+	App       App              `mapstructure:"app"`
+	Server    Server           `mapstructure:"server"`
+	Databases Databases        `mapstructure:"databases"`
+	Redis     map[string]Redis `mapstructure:"redis"   validate:"omitempty,dive"`
+	Storage   Storage          `mapstructure:"storage"`
+	Logger    Logger           `mapstructure:"logger"`
 }
 
 // App holds application identity and environment.
@@ -41,25 +41,11 @@ type Server struct {
 
 // Databases holds every configured datastore, keyed by logical name.
 type Databases struct {
-	Postgres  map[string]Postgres  `mapstructure:"postgres"   validate:"omitempty,dive"`
-	SQLServer map[string]SQLServer `mapstructure:"sql_server" validate:"omitempty,dive"`
+	Postgres map[string]Postgres `mapstructure:"postgres" validate:"omitempty,dive"`
 }
 
 // Postgres holds connection and pool settings for a PostgreSQL database.
 type Postgres struct {
-	Host            string        `mapstructure:"host"              validate:"required"`
-	Port            int           `mapstructure:"port"              validate:"required,min=1,max=65535"`
-	User            string        `mapstructure:"user"              validate:"required"`
-	Password        string        `mapstructure:"password"          validate:"required"`
-	Database        string        `mapstructure:"database"          validate:"required"`
-	Opts            string        `mapstructure:"opts"`
-	MaxOpenConns    int           `mapstructure:"max_open_conns"    validate:"gte=0"`
-	MaxIdleConns    int           `mapstructure:"max_idle_conns"    validate:"gte=0"`
-	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
-}
-
-// SQLServer holds connection and pool settings for a SQL Server database.
-type SQLServer struct {
 	Host            string        `mapstructure:"host"              validate:"required"`
 	Port            int           `mapstructure:"port"              validate:"required,min=1,max=65535"`
 	User            string        `mapstructure:"user"              validate:"required"`
@@ -84,18 +70,15 @@ type Redis struct {
 	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
 }
 
-// Service holds the base URL, endpoints, timeout, and auth for an upstream service.
-type Service struct {
-	BaseURL   string            `mapstructure:"base_url"  validate:"required,url"`
-	Endpoints map[string]string `mapstructure:"endpoints" validate:"required,min=1,dive,required"`
-	Timeout   time.Duration     `mapstructure:"timeout"   validate:"required,gt=0"`
-	Auth      ServiceAuth       `mapstructure:"auth"`
-}
-
-// ServiceAuth holds basic-auth credentials for a service.
-type ServiceAuth struct {
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
+// Storage holds the object store. Required: attendance needs somewhere to put the selfies.
+type Storage struct {
+	Endpoint        string        `mapstructure:"endpoint"          validate:"required,url"`
+	Region          string        `mapstructure:"region"            validate:"required"`
+	Bucket          string        `mapstructure:"bucket"            validate:"required"`
+	AccessKeyID     string        `mapstructure:"access_key_id"     validate:"required"`
+	SecretAccessKey string        `mapstructure:"secret_access_key" validate:"required"`
+	ForcePathStyle  bool          `mapstructure:"force_path_style"`
+	PresignTTL      time.Duration `mapstructure:"presign_ttl"       validate:"required,gt=0"`
 }
 
 // Logger holds log output, level, and rotation settings.

@@ -3,7 +3,7 @@ package health
 import (
 	"context"
 
-	healthcontract "github.com/supernurture/go-template/internal/api/server/oapicodegen/health"
+	healthcontract "attendance-system/internal/api/server/oapicodegen/health"
 )
 
 type Handler struct{}

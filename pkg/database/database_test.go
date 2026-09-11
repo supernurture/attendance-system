@@ -2,6 +2,7 @@ package database
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,21 +32,6 @@ func mockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 
 func brokenDB() *gorm.DB {
 	return &gorm.DB{Config: &gorm.Config{}}
-}
-
-func TestHasTLS(t *testing.T) {
-	if !hasTLS("sslmode=require pool=2", "sslmode=require", "sslmode=verify") {
-		t.Error("expected require to count as TLS")
-	}
-	if !hasTLS("sslmode=verify-full", "sslmode=require", "sslmode=verify") {
-		t.Error("expected verify-full to count as TLS")
-	}
-	if hasTLS("sslmode=disable", "sslmode=require", "sslmode=verify") {
-		t.Error("expected disable not to count as TLS")
-	}
-	if hasTLS("random") {
-		t.Error("expected no secure values to mean no TLS")
-	}
 }
 
 func TestConfigurePool(t *testing.T) {
@@ -88,5 +74,62 @@ func TestPing(t *testing.T) {
 
 	if err := ping(brokenDB()); err == nil {
 		t.Error("expected error from a DB with no connection pool")
+	}
+}
+
+func TestTLSWarning(t *testing.T) {
+	tests := map[string]string{
+		"sslmode=verify-full":                   "",
+		"connect_timeout=2 sslmode=verify-full": "",
+
+		"sslmode=verify-ca": "hostname",
+		"sslmode=require":   "does not verify",
+		"sslmode=disable":   "not encrypted",
+		"sslmode=allow":     "not encrypted",
+		"sslmode=prefer":    "not encrypted",
+
+		"":                  "defaults to prefer",
+		"connect_timeout=2": "defaults to prefer",
+	}
+
+	for opts, want := range tests {
+		got := TLSWarning(opts)
+		switch {
+		case want == "" && got != "":
+			t.Errorf("TLSWarning(%q) = %q, want no warning", opts, got)
+		case want != "" && !strings.Contains(got, want):
+			t.Errorf("TLSWarning(%q) = %q, want it to mention %q", opts, got, want)
+		}
+	}
+}
+
+func TestSSLMode(t *testing.T) {
+	for opts, want := range map[string]string{
+		"sslmode=require":                    "require",
+		"connect_timeout=2 sslmode=disable":  "disable",
+		"sslmode=verify-full connect_time=1": "verify-full",
+		"connect_timeout=2":                  "",
+		"":                                   "",
+		"password=xsslmode=require":          "",
+	} {
+		if got := sslMode(opts); got != want {
+			t.Errorf("sslMode(%q) = %q, want %q", opts, got, want)
+		}
+	}
+}
+
+func TestSSLModeLastOneWins(t *testing.T) {
+	for opts, want := range map[string]string{
+		"sslmode=require sslmode=disable":     "disable",
+		"sslmode=disable sslmode=require":     "require",
+		"sslmode=verify-full sslmode=disable": "disable",
+	} {
+		if got := sslMode(opts); got != want {
+			t.Errorf("sslMode(%q) = %q, want %q", opts, got, want)
+		}
+	}
+
+	if TLSWarning("sslmode=verify-full sslmode=disable") == "" {
+		t.Error("a trailing sslmode=disable was reported as an authenticated connection")
 	}
 }

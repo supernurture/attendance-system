@@ -12,9 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/supernurture/go-template/internal/config"
-	"github.com/supernurture/go-template/internal/pkg/util"
-	"github.com/supernurture/go-template/pkg/logger"
+	"attendance-system/internal/config"
+	"attendance-system/internal/pkg/util"
+	"attendance-system/pkg/logger"
 )
 
 const (
@@ -26,6 +26,8 @@ const (
 )
 
 type reqIDContextKey struct{}
+
+var generateID = util.GenerateUniqueID
 
 // Default returns the standard chain in execution order; mount with router.Use(Default(cfg, log)...).
 func Default(cfg *config.Config, log *logger.Logger) []gin.HandlerFunc {
@@ -50,7 +52,7 @@ func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		reqID := c.GetHeader(requestIDHeader)
 		if !validRequestID(reqID) {
-			uniqueID, err := util.GenerateUniqueID(requestIDLength)
+			uniqueID, err := generateID(requestIDLength)
 			if err != nil {
 				uniqueID = fmt.Sprintf("%x", time.Now().UnixNano())
 			}

@@ -12,15 +12,17 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/supernurture/go-template/internal/config"
-	"github.com/supernurture/go-template/pkg/database"
-	"github.com/supernurture/go-template/pkg/redis"
+	"attendance-system/internal/config"
+	"attendance-system/internal/pkg/storage"
+	"attendance-system/pkg/database"
+	"attendance-system/pkg/redis"
 )
 
 func stubOpeners(t *testing.T) {
 	t.Helper()
 
-	openMock := func(string, int, string, string, string, string, database.PoolConfig) (*gorm.DB, error) {
+	postgresOrig, redisOrig, storageOrig := newPostgres, newRedis, newStorage
+	newPostgres = func(string, int, string, string, string, string, database.PoolConfig) (*gorm.DB, error) {
 		sqlDB, mock, err := sqlmock.New()
 		if err != nil {
 			return nil, err
@@ -31,13 +33,12 @@ func stubOpeners(t *testing.T) {
 			&gorm.Config{DisableAutomaticPing: true},
 		)
 	}
-
-	postgresOrig, sqlServerOrig, redisOrig := newPostgres, newSQLServer, newRedis
-	newPostgres, newSQLServer = openMock, openMock
 	newRedis = func(string, int, string, string, int, bool, redis.PoolConfig) (*goredis.Client, error) {
 		return goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"}), nil
 	}
-	t.Cleanup(func() { newPostgres, newSQLServer, newRedis = postgresOrig, sqlServerOrig, redisOrig })
+	newStorage = func(storage.Config) (*storage.Storage, error) { return &storage.Storage{}, nil }
+
+	t.Cleanup(func() { newPostgres, newRedis, newStorage = postgresOrig, redisOrig, storageOrig })
 }
 
 func testConfig(t *testing.T) *config.Config {
@@ -48,16 +49,21 @@ func testConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func TestNewContainerWithoutDependencies(t *testing.T) {
+func TestNewContainerWithoutOptionalDependencies(t *testing.T) {
+	stubOpeners(t)
+
 	c, err := NewContainer(testConfig(t))
 	if err != nil {
 		t.Fatalf("NewContainer: %v", err)
 	}
-	if c.Logger == nil || c.HTTPClient == nil {
-		t.Error("logger and HTTP client should always be built")
+	if c.Logger == nil {
+		t.Error("the logger should always be built")
 	}
-	if len(c.Postgres) != 0 || len(c.SQLServer) != 0 || len(c.Redis) != 0 {
-		t.Errorf("unconfigured dependencies should be absent: %+v", c)
+	if len(c.Postgres) != 0 || len(c.Redis) != 0 {
+		t.Errorf("unconfigured databases and caches should be absent: %+v", c)
+	}
+	if c.Storage == nil {
+		t.Error("storage is not optional and should always be opened")
 	}
 	if err := c.Close(); err != nil {
 		t.Errorf("Close: %v", err)
@@ -87,7 +93,6 @@ func TestNewContainerOpensEveryDependency(t *testing.T) {
 
 	cfg := testConfig(t)
 	cfg.Databases.Postgres = map[string]config.Postgres{"primary": {}}
-	cfg.Databases.SQLServer = map[string]config.SQLServer{"legacy": {}}
 	cfg.Redis = map[string]config.Redis{"cache": {}}
 
 	c, err := NewContainer(cfg)
@@ -95,11 +100,11 @@ func TestNewContainerOpensEveryDependency(t *testing.T) {
 		t.Fatalf("NewContainer: %v", err)
 	}
 
-	if c.Postgres["primary"] == nil || c.SQLServer["legacy"] == nil || c.Redis["cache"] == nil {
+	if c.Postgres["primary"] == nil || c.Redis["cache"] == nil || c.Storage == nil {
 		t.Errorf("not every dependency was stored: %+v", c)
 	}
-	if len(c.shutdowns) != 4 {
-		t.Errorf("shutdown hooks = %d, want 4", len(c.shutdowns))
+	if len(c.shutdowns) != 3 {
+		t.Errorf("shutdown hooks = %d, want 3", len(c.shutdowns))
 	}
 	if err := c.Close(); err != nil {
 		t.Errorf("Close: %v", err)
@@ -113,11 +118,11 @@ func TestNewContainerNamesTheFailingDependency(t *testing.T) {
 				"primary": {Host: "127.0.0.1", Port: 2, Opts: "connect_timeout=1"},
 			}
 		},
-		`sql server "legacy"`: func(cfg *config.Config) {
-			cfg.Databases.SQLServer = map[string]config.SQLServer{"legacy": {Host: "127.0.0.1", Port: 2}}
-		},
 		`redis "cache"`: func(cfg *config.Config) {
 			cfg.Redis = map[string]config.Redis{"cache": {Host: "127.0.0.1", Port: 2}}
+		},
+		"open storage": func(cfg *config.Config) {
+			cfg.Storage = config.Storage{Bucket: "attendance", Endpoint: "http://127.0.0.1:2", Region: "auto"}
 		},
 	}
 

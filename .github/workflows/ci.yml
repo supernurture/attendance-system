@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: attendance
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d attendance"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Cheap checks first: a typo should not cost a lint build and a MinIO pull.
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum \
+            || { echo "::error::go.mod/go.sum are stale -- run 'make tidy' and commit the result"; exit 1; }
+
+      # Keyed on the Makefile so bumping GOLANGCI_VERSION cannot leave a stale binary cached.
+      - name: Cache golangci-lint
+        id: lint-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/golangci-lint
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Install golangci-lint
+        if: steps.lint-cache.outputs.cache-hit != 'true'
+        run: make lint-install
+
+      - name: Lint
+        run: make lint
+
+      # Also proves config.example.yaml is usable as shipped. Down is exercised on purpose.
+      - name: Migrations
+        run: |
+          cp configs/config.example.yaml configs/config.yaml
+          make migrate-up
+          make migrate-down
+          make migrate-up
+          make migrate-status
+
+      - name: Start MinIO
+        run: |
+          docker rm -f minio >/dev/null 2>&1 || true   # self-hosted runners are not clean
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && ready=1 && break
+            sleep 1
+          done
+          if [ -z "${ready:-}" ]; then
+            echo "::error::MinIO did not become healthy in 30s"
+            docker logs minio
+            exit 1
+          fi
+          docker run --rm --network host --entrypoint sh \
+            minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
+            "mc alias set local http://localhost:9000 minioadmin minioadmin && \
+             mc mb --ignore-existing local/attendance"
+
+      # Turns the local-convenience skips into failures, so a dead service cannot leave CI green.
+      - name: Test
+        run: make test
+        env:
+          STORAGE_TEST_REQUIRED: "1"
+          POSTGRES_TEST_REQUIRED: "1"
