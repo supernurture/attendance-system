@@ -9,8 +9,12 @@ development).
 ## Status
 
 Built incrementally in 7 phases — the full plan is in [`docs/plan.md`](docs/plan.md).
-**Phase 0 is done** — skeleton, dependencies, and migrations.
-There are no domain endpoints yet; only `GET /health` is live.
+**Phases 0–1 are done** — skeleton, migrations, auth (login/refresh/logout), and presigned uploads.
+Live endpoints: `GET /health`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`,
+`POST /uploads/intent`.
+
+To get a first account, set `AUTH_SEED_ADMIN_EMAIL` and `AUTH_SEED_ADMIN_PASSWORD` in `.env`; the
+API creates that super_admin at startup if the email is free.
 
 ## Running
 
