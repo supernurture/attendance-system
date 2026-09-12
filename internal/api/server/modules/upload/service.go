@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"attendance-system/internal/pkg/apperr"
 	"attendance-system/internal/pkg/storage"
 )
 
@@ -60,7 +61,7 @@ func (s *Service) Verify(ctx context.Context, userID int64, purpose Purpose, key
 
 	size, err := s.repo.Size(ctx, key)
 	if errors.Is(err, storage.ErrNotFound) {
-		return "", invalid("nothing was uploaded to %q", key)
+		return "", apperr.Invalid("nothing was uploaded to %q", key)
 	}
 	if err != nil {
 		return "", err

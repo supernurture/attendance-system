@@ -3,7 +3,6 @@ package upload
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +17,7 @@ import (
 
 	uploadcontract "attendance-system/internal/api/server/oapicodegen/upload"
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 	"attendance-system/internal/pkg/storage"
 )
 
@@ -92,8 +92,7 @@ func upload(t *testing.T, svc *Service, userID int64, purpose Purpose, contentTy
 }
 
 func isValidationError(err error) bool {
-	_, ok := errors.AsType[*ValidationError](err)
-	return ok
+	return apperr.IsValidation(err)
 }
 
 // postIntent asks for an attendance photo upload as user 5, through middleware.Auth like the real route.

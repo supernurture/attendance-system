@@ -6,6 +6,7 @@ import (
 
 	uploadcontract "attendance-system/internal/api/server/oapicodegen/upload"
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 )
 
 type Handler struct {
@@ -30,8 +31,8 @@ func (h *Handler) CreateUploadIntent(
 	}
 
 	intent, err := h.svc.Intent(ctx, claims.UserID, Purpose(req.Body.Purpose), req.Body.ContentType, req.Body.SizeBytes)
-	if validationErr, ok := errors.AsType[*ValidationError](err); ok {
-		return uploadcontract.CreateUploadIntent400JSONResponse{Message: validationErr.Error()}, nil
+	if apperr.IsValidation(err) {
+		return uploadcontract.CreateUploadIntent400JSONResponse{Message: err.Error()}, nil
 	}
 	if err != nil {
 		return nil, err
