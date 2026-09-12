@@ -116,11 +116,20 @@ func TestNewRouterRejectsABadSeedAdmin(t *testing.T) {
 }
 
 func TestProtectedRouteWithoutTokenIs401(t *testing.T) {
-	rec := post(newTestRouter(t, testConfig(), newTestDeps(t)), "/uploads/intent",
-		`{"purpose":"attendance_photo","content_type":"image/jpeg","size_bytes":10}`)
+	router := newTestRouter(t, testConfig(), newTestDeps(t))
 
+	for _, path := range []string{"/me", "/users", "/departments"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s: status = %d, want 401", path, rec.Code)
+		}
+	}
+
+	rec := post(router, "/uploads/intent",
+		`{"purpose":"attendance_photo","content_type":"image/jpeg","size_bytes":10}`)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body)
+		t.Fatalf("POST /uploads/intent: status = %d, want 401; body = %s", rec.Code, rec.Body)
 	}
 }
 

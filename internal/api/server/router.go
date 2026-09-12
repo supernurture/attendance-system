@@ -11,9 +11,11 @@ import (
 	"attendance-system/internal/api/server/modules/auth"
 	"attendance-system/internal/api/server/modules/health"
 	"attendance-system/internal/api/server/modules/upload"
+	"attendance-system/internal/api/server/modules/user"
 	authcontract "attendance-system/internal/api/server/oapicodegen/auth"
 	healthcontract "attendance-system/internal/api/server/oapicodegen/health"
 	uploadcontract "attendance-system/internal/api/server/oapicodegen/upload"
+	usercontract "attendance-system/internal/api/server/oapicodegen/user"
 	"attendance-system/internal/config"
 	"attendance-system/internal/container"
 	"attendance-system/internal/middleware"
@@ -67,6 +69,8 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 		authcontract.NewStrictHandlerWithOptions(auth.NewHandler(authSvc), nil, authOptions))
 
 	protected := router.Group("", middleware.Auth(secret))
+	usercontract.RegisterHandlers(protected,
+		usercontract.NewStrictHandlerWithOptions(user.NewHandler(user.NewService(db)), nil, userOptions))
 	uploadHandler := upload.NewHandler(upload.NewService(deps.Storage))
 	uploadcontract.RegisterHandlers(protected,
 		uploadcontract.NewStrictHandlerWithOptions(uploadHandler, nil, uploadOptions))
@@ -91,6 +95,9 @@ var (
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 	uploadOptions = uploadcontract.StrictGinServerOptions{
+		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
+	}
+	userOptions = usercontract.StrictGinServerOptions{
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 )

@@ -16,6 +16,7 @@ type User struct {
 	FullName     string
 	Role         string
 	IsActive     bool
+	DeletedAt    gorm.DeletedAt // a removed account stops logging in and refreshing
 }
 
 func (User) TableName() string { return "users" }

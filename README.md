@@ -9,9 +9,13 @@ development).
 ## Status
 
 Built incrementally in 7 phases — the full plan is in [`docs/plan.md`](docs/plan.md).
-**Phases 0–1 are done** — skeleton, migrations, auth (login/refresh/logout), and presigned uploads.
-Live endpoints: `GET /health`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`,
-`POST /uploads/intent`.
+**Phases 0–2 are done** — skeleton, migrations, auth, presigned uploads, and the employee
+directory: users, the manager hierarchy, departments, and role grants recorded in `audit_logs`.
+Live endpoints: `GET /health`, `POST /auth/{login,refresh,logout}`, `GET /me`, `/users` and
+`/users/{id}` (+ `/role`), `/departments` and `/departments/{id}`, `POST /uploads/intent`.
+
+Who sees whom follows `manager_id`: a supervisor reaches their own subtree, hr_admin and
+super_admin reach everyone, and only super_admin grants roles.
 
 To get a first account, set `AUTH_SEED_ADMIN_EMAIL` and `AUTH_SEED_ADMIN_PASSWORD` in `.env`; the
 API creates that super_admin at startup if the email is free.
