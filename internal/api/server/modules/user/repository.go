@@ -1,6 +1,7 @@
 package user
 
 import (
+	"attendance-system/internal/pkg/apperr"
 	"context"
 	"errors"
 	"time"
@@ -13,18 +14,19 @@ import (
 // User is an employee. DeletedAt makes every query here skip the removed ones, and it is why
 // auth refuses a deleted account: the same column filters its lookups.
 type User struct {
-	ID           int64
-	Email        string
-	PasswordHash string
-	FullName     string
-	Role         string
-	IsActive     bool
-	JoinDate     time.Time
-	DepartmentID *int64
-	ManagerID    *int64
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    gorm.DeletedAt
+	ID                int64
+	Email             string
+	PasswordHash      string
+	FullName          string
+	Role              string
+	IsActive          bool
+	JoinDate          time.Time
+	DepartmentID      *int64
+	ManagerID         *int64
+	DefaultScheduleID *int64
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DeletedAt         gorm.DeletedAt
 }
 
 func (User) TableName() string { return "users" }
@@ -38,6 +40,14 @@ type Department struct {
 }
 
 func (Department) TableName() string { return "departments" }
+
+// workSchedule is the part of work_schedules this module reads: whether one is still live.
+type workSchedule struct {
+	ID        int64
+	DeletedAt gorm.DeletedAt
+}
+
+func (workSchedule) TableName() string { return "work_schedules" }
 
 // AuditLog is one sensitive action, with the actor the database itself could not know.
 type AuditLog struct {
@@ -68,12 +78,12 @@ func (r *Repository) Exists(ctx context.Context, id int64) (bool, error) {
 	return found > 0, err
 }
 
-// ByID fails with ErrNotFound when no live user has that id.
+// ByID fails with apperr.ErrNotFound when no live user has that id.
 func (r *Repository) ByID(ctx context.Context, id int64) (User, error) {
 	var user User
 	err := r.db.WithContext(ctx).Take(&user, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return User{}, ErrNotFound
+		return User{}, apperr.ErrNotFound
 	}
 	return user, err
 }
@@ -116,7 +126,7 @@ func (r *Repository) InSubtree(ctx context.Context, managerID, userID int64) (bo
 	return found > 0, err
 }
 
-// Create stores a new user, reporting ErrConflict for a taken email.
+// Create stores a new user, reporting apperr.ErrConflict for a taken email.
 func (r *Repository) Create(ctx context.Context, user *User) error {
 	return translate(r.db.WithContext(ctx).Create(user).Error)
 }
@@ -125,18 +135,19 @@ func (r *Repository) Create(ctx context.Context, user *User) error {
 func (r *Repository) Replace(ctx context.Context, user User, audit *AuditLog) (User, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&User{}).Where("id = ?", user.ID).Updates(map[string]any{
-			"full_name":     user.FullName,
-			"is_active":     user.IsActive,
-			"join_date":     user.JoinDate,
-			"department_id": user.DepartmentID,
-			"manager_id":    user.ManagerID,
-			"updated_at":    time.Now(),
+			"full_name":           user.FullName,
+			"is_active":           user.IsActive,
+			"join_date":           user.JoinDate,
+			"department_id":       user.DepartmentID,
+			"manager_id":          user.ManagerID,
+			"default_schedule_id": user.DefaultScheduleID,
+			"updated_at":          time.Now(),
 		})
 		if result.Error != nil {
 			return translate(result.Error)
 		}
 		if result.RowsAffected == 0 {
-			return ErrNotFound
+			return apperr.ErrNotFound
 		}
 		return writeAudit(tx, audit)
 	})
@@ -156,7 +167,7 @@ func (r *Repository) ChangeRole(ctx context.Context, userID int64, role string, 
 			return translate(result.Error)
 		}
 		if result.RowsAffected == 0 {
-			return ErrNotFound
+			return apperr.ErrNotFound
 		}
 		return writeAudit(tx, &audit)
 	})
@@ -175,7 +186,7 @@ func (r *Repository) SoftDelete(ctx context.Context, id int64, audit *AuditLog) 
 		var leaver User
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Take(&leaver, id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrNotFound
+				return apperr.ErrNotFound
 			}
 			return err
 		}
@@ -200,6 +211,14 @@ func (r *Repository) DepartmentExists(ctx context.Context, id int64) (bool, erro
 	return found > 0, err
 }
 
+// ScheduleExists reports whether a live work schedule has that id. Assigning a retired one would leave
+// the employee with hours nobody maintains any more.
+func (r *Repository) ScheduleExists(ctx context.Context, id int64) (bool, error) {
+	var found int64
+	err := r.db.WithContext(ctx).Model(&workSchedule{}).Where("id = ?", id).Count(&found).Error
+	return found > 0, err
+}
+
 func (r *Repository) ListDepartments(ctx context.Context) ([]Department, error) {
 	var departments []Department
 	return departments, r.db.WithContext(ctx).Order("name").Find(&departments).Error
@@ -216,7 +235,7 @@ func (r *Repository) RenameDepartment(ctx context.Context, id int64, name string
 		return Department{}, translate(result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return Department{}, ErrNotFound
+		return Department{}, apperr.ErrNotFound
 	}
 
 	var department Department
@@ -229,7 +248,7 @@ func (r *Repository) DeleteDepartment(ctx context.Context, id int64) error {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return ErrNotFound
+		return apperr.ErrNotFound
 	}
 	return nil
 }
@@ -250,9 +269,9 @@ func translate(err error) error {
 	}
 	switch pgErr.Code {
 	case "23505": // unique_violation
-		return ErrConflict
+		return apperr.ErrConflict
 	case "23503": // foreign_key_violation
-		return invalid("department_id or manager_id does not exist")
+		return apperr.Invalid("department_id or manager_id does not exist")
 	}
 	return err
 }

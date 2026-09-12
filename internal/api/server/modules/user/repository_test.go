@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 )
 
 func TestByIDReportsAMiss(t *testing.T) {
 	s := newServer(t)
 
-	if _, err := s.repo.ByID(t.Context(), 0); !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
+	if _, err := s.repo.ByID(t.Context(), 0); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("err = %v, want apperr.ErrNotFound", err)
 	}
 }
 
@@ -104,8 +105,8 @@ func TestCreateRejectsATakenEmailButReusesADeletedOne(t *testing.T) {
 	taken := s.addUser(t, middleware.RoleEmployee, nil)
 
 	again := &User{Email: taken.Email, PasswordHash: "x", FullName: "Twin", Role: "employee", JoinDate: time.Now()}
-	if err := s.repo.Create(t.Context(), again); !errors.Is(err, ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict", err)
+	if err := s.repo.Create(t.Context(), again); !errors.Is(err, apperr.ErrConflict) {
+		t.Fatalf("err = %v, want apperr.ErrConflict", err)
 	}
 
 	if err := s.repo.SoftDelete(t.Context(), taken.ID, nil); err != nil {
@@ -146,8 +147,8 @@ func TestSoftDeleteKeepsTheRowForReports(t *testing.T) {
 		t.Fatalf("SoftDelete: %v", err)
 	}
 
-	if _, err := s.repo.ByID(t.Context(), leaver.ID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("ByID after the delete: err = %v, want ErrNotFound", err)
+	if _, err := s.repo.ByID(t.Context(), leaver.ID); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("ByID after the delete: err = %v, want apperr.ErrNotFound", err)
 	}
 	var stored User
 	if err := s.db.Unscoped().Take(&stored, leaver.ID).Error; err != nil || !stored.DeletedAt.Valid {
@@ -166,8 +167,8 @@ func TestSoftDeleteKeepsTheRowForReports(t *testing.T) {
 func TestSoftDeleteReportsAMiss(t *testing.T) {
 	s := newServer(t)
 
-	if err := s.repo.SoftDelete(t.Context(), 0, nil); !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
+	if err := s.repo.SoftDelete(t.Context(), 0, nil); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("err = %v, want apperr.ErrNotFound", err)
 	}
 }
 
@@ -184,11 +185,11 @@ func TestTheDatabaseRefusesAnUnknownRole(t *testing.T) {
 func TestReplaceAndChangeRoleReportAMiss(t *testing.T) {
 	s := newServer(t)
 
-	if _, err := s.repo.Replace(t.Context(), User{ID: 0, FullName: "Ghost"}, nil); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Replace: err = %v, want ErrNotFound", err)
+	if _, err := s.repo.Replace(t.Context(), User{ID: 0, FullName: "Ghost"}, nil); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("Replace: err = %v, want apperr.ErrNotFound", err)
 	}
-	if _, err := s.repo.ChangeRole(t.Context(), 0, "employee", AuditLog{}); !errors.Is(err, ErrNotFound) {
-		t.Errorf("ChangeRole: err = %v, want ErrNotFound", err)
+	if _, err := s.repo.ChangeRole(t.Context(), 0, "employee", AuditLog{}); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("ChangeRole: err = %v, want apperr.ErrNotFound", err)
 	}
 }
 
@@ -204,16 +205,16 @@ func TestDepartments(t *testing.T) {
 
 	// The unique index ignores case, so this is the same name.
 	twin := Department{Name: strings.ToUpper(name)}
-	if err := s.repo.CreateDepartment(t.Context(), &twin); !errors.Is(err, ErrConflict) {
-		t.Errorf("duplicate name: err = %v, want ErrConflict", err)
+	if err := s.repo.CreateDepartment(t.Context(), &twin); !errors.Is(err, apperr.ErrConflict) {
+		t.Errorf("duplicate name: err = %v, want apperr.ErrConflict", err)
 	}
 
 	renamed, err := s.repo.RenameDepartment(t.Context(), department.ID, name+" Platform")
 	if err != nil || renamed.Name != name+" Platform" {
 		t.Errorf("RenameDepartment = %+v, %v", renamed, err)
 	}
-	if _, err := s.repo.RenameDepartment(t.Context(), 0, "Ghost"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("renaming a missing department: err = %v, want ErrNotFound", err)
+	if _, err := s.repo.RenameDepartment(t.Context(), 0, "Ghost"); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("renaming a missing department: err = %v, want apperr.ErrNotFound", err)
 	}
 
 	listed, err := s.repo.ListDepartments(t.Context())
@@ -224,8 +225,8 @@ func TestDepartments(t *testing.T) {
 	if err := s.repo.DeleteDepartment(t.Context(), department.ID); err != nil {
 		t.Fatalf("DeleteDepartment: %v", err)
 	}
-	if err := s.repo.DeleteDepartment(t.Context(), 0); !errors.Is(err, ErrNotFound) {
-		t.Errorf("deleting a missing department: err = %v, want ErrNotFound", err)
+	if err := s.repo.DeleteDepartment(t.Context(), 0); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("deleting a missing department: err = %v, want apperr.ErrNotFound", err)
 	}
 }
 
@@ -237,7 +238,7 @@ func TestTranslateLeavesOtherFailuresAlone(t *testing.T) {
 		Email: unique("role") + "@test.local", PasswordHash: "x",
 		FullName: "Bad Role", Role: "owner", JoinDate: time.Now(),
 	})
-	if err == nil || errors.Is(err, ErrConflict) || isValidationError(err) {
+	if err == nil || errors.Is(err, apperr.ErrConflict) || isValidationError(err) {
 		t.Errorf("err = %v, want the raw database error", err)
 	}
 }

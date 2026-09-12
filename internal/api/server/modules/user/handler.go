@@ -9,6 +9,7 @@ import (
 
 	usercontract "attendance-system/internal/api/server/oapicodegen/user"
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 )
 
 type Handler struct {
@@ -82,11 +83,12 @@ func (h *Handler) CreateUser(
 	}
 
 	next := NewUser{
-		Email:        req.Body.Email,
-		Password:     req.Body.Password,
-		FullName:     req.Body.FullName,
-		DepartmentID: req.Body.DepartmentId,
-		ManagerID:    req.Body.ManagerId,
+		Email:             req.Body.Email,
+		Password:          req.Body.Password,
+		FullName:          req.Body.FullName,
+		DepartmentID:      req.Body.DepartmentId,
+		ManagerID:         req.Body.ManagerId,
+		DefaultScheduleID: req.Body.DefaultScheduleId,
 	}
 	if req.Body.JoinDate != nil {
 		next.JoinDate = req.Body.JoinDate.Time
@@ -137,11 +139,12 @@ func (h *Handler) UpdateUser(
 	}
 
 	user, err := h.svc.Replace(ctx, claims, req.Id, Details{
-		FullName:     req.Body.FullName,
-		IsActive:     req.Body.IsActive,
-		JoinDate:     req.Body.JoinDate.Time,
-		DepartmentID: req.Body.DepartmentId,
-		ManagerID:    req.Body.ManagerId,
+		FullName:          req.Body.FullName,
+		IsActive:          req.Body.IsActive,
+		JoinDate:          req.Body.JoinDate.Time,
+		DepartmentID:      req.Body.DepartmentId,
+		ManagerID:         req.Body.ManagerId,
+		DefaultScheduleID: req.Body.DefaultScheduleId,
 	})
 	switch status(err) {
 	case http.StatusBadRequest:
@@ -310,14 +313,14 @@ func status(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case errors.Is(err, ErrForbidden):
+	case errors.Is(err, apperr.ErrForbidden):
 		return http.StatusForbidden
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, apperr.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, apperr.ErrConflict):
 		return http.StatusConflict
 	}
-	if _, ok := errors.AsType[*ValidationError](err); ok {
+	if apperr.IsValidation(err) {
 		return http.StatusBadRequest
 	}
 	return 0
@@ -341,14 +344,15 @@ func conflict(err error) usercontract.ConflictJSONResponse {
 
 func response(user User) usercontract.User {
 	return usercontract.User{
-		Id:           user.ID,
-		Email:        user.Email,
-		FullName:     user.FullName,
-		Role:         usercontract.Role(user.Role),
-		IsActive:     user.IsActive,
-		JoinDate:     types.Date{Time: user.JoinDate},
-		DepartmentId: user.DepartmentID,
-		ManagerId:    user.ManagerID,
+		Id:                user.ID,
+		Email:             user.Email,
+		FullName:          user.FullName,
+		Role:              usercontract.Role(user.Role),
+		IsActive:          user.IsActive,
+		JoinDate:          types.Date{Time: user.JoinDate},
+		DepartmentId:      user.DepartmentID,
+		ManagerId:         user.ManagerID,
+		DefaultScheduleId: user.DefaultScheduleID,
 	}
 }
 

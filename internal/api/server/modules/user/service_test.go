@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 )
 
 func TestListFollowsTheHierarchy(t *testing.T) {
@@ -18,8 +19,8 @@ func TestListFollowsTheHierarchy(t *testing.T) {
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 
 	_, err := s.svc.List(t.Context(), claimsOf(junior), Page{Limit: defaultPageLimit})
-	if !errors.Is(err, ErrForbidden) {
-		t.Errorf("an employee listing everyone: err = %v, want ErrForbidden", err)
+	if !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("an employee listing everyone: err = %v, want apperr.ErrForbidden", err)
 	}
 
 	below, err := s.svc.List(t.Context(), claimsOf(lead), Page{Limit: defaultPageLimit})
@@ -52,9 +53,9 @@ func TestGetReachesSelfSubtreeAndEveryoneForAdmins(t *testing.T) {
 		wantErr    error
 	}{
 		"themselves":             {junior, junior, nil},
-		"someone else":           {junior, stranger, ErrForbidden},
+		"someone else":           {junior, stranger, apperr.ErrForbidden},
 		"their own subtree":      {lead, junior, nil},
-		"outside their subtree":  {lead, stranger, ErrForbidden},
+		"outside their subtree":  {lead, stranger, apperr.ErrForbidden},
 		"anyone, as an hr_admin": {admin, stranger, nil},
 	}
 	for name, test := range tests {
@@ -77,8 +78,8 @@ func TestCreateIsForHRAdminAndStartsAsAnEmployee(t *testing.T) {
 		Password: "eight888",
 		FullName: "  Budi Santoso ",
 	}
-	if _, err := s.svc.Create(t.Context(), claimsOf(supervisor), next); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("a supervisor adding an employee: err = %v, want ErrForbidden", err)
+	if _, err := s.svc.Create(t.Context(), claimsOf(supervisor), next); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("a supervisor adding an employee: err = %v, want apperr.ErrForbidden", err)
 	}
 
 	created, err := s.svc.Create(t.Context(), claimsOf(admin), next)
@@ -169,11 +170,12 @@ func TestReplaceChecksRoleAndInput(t *testing.T) {
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
 	details := Details{FullName: "Renamed", IsActive: true}
 
-	if _, err := s.svc.Replace(t.Context(), claimsOf(employee), employee.ID, details); !errors.Is(err, ErrForbidden) {
-		t.Errorf("an employee editing themselves: err = %v, want ErrForbidden", err)
+	_, err := s.svc.Replace(t.Context(), claimsOf(employee), employee.ID, details)
+	if !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("an employee editing themselves: err = %v, want apperr.ErrForbidden", err)
 	}
-	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), 0, details); !errors.Is(err, ErrNotFound) {
-		t.Errorf("a missing user: err = %v, want ErrNotFound", err)
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), 0, details); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("a missing user: err = %v, want apperr.ErrNotFound", err)
 	}
 
 	own := Details{FullName: "Renamed", IsActive: true, ManagerID: &employee.ID}
@@ -187,8 +189,8 @@ func TestDeleteIsForHRAdminAndNotForThemselves(t *testing.T) {
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
 
-	if err := s.svc.Delete(t.Context(), claimsOf(employee), employee.ID); !errors.Is(err, ErrForbidden) {
-		t.Errorf("an employee deleting themselves: err = %v, want ErrForbidden", err)
+	if err := s.svc.Delete(t.Context(), claimsOf(employee), employee.ID); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("an employee deleting themselves: err = %v, want apperr.ErrForbidden", err)
 	}
 	if err := s.svc.Delete(t.Context(), claimsOf(admin), admin.ID); !isValidationError(err) {
 		t.Errorf("an admin deleting their own account: err = %v, want a ValidationError", err)
@@ -196,8 +198,8 @@ func TestDeleteIsForHRAdminAndNotForThemselves(t *testing.T) {
 	if err := s.svc.Delete(t.Context(), claimsOf(admin), employee.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := s.svc.Get(t.Context(), claimsOf(admin), employee.ID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("after the delete: err = %v, want ErrNotFound", err)
+	if _, err := s.svc.Get(t.Context(), claimsOf(admin), employee.ID); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("after the delete: err = %v, want apperr.ErrNotFound", err)
 	}
 }
 
@@ -209,8 +211,8 @@ func TestChangeRoleIsForSuperAdminAndIsAudited(t *testing.T) {
 
 	// Segregation of duties: whoever approves corrections cannot hand out roles.
 	_, err := s.svc.ChangeRole(t.Context(), claimsOf(admin), employee.ID, middleware.RoleSupervisor)
-	if !errors.Is(err, ErrForbidden) {
-		t.Errorf("hr_admin granting a role: err = %v, want ErrForbidden", err)
+	if !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("hr_admin granting a role: err = %v, want apperr.ErrForbidden", err)
 	}
 
 	promoted, err := s.svc.ChangeRole(t.Context(), claimsOf(owner), employee.ID, middleware.RoleSupervisor)
@@ -251,8 +253,8 @@ func TestChangeRoleRefusesUnknownRolesAndThemselves(t *testing.T) {
 		t.Errorf("demoting themselves: err = %v, want a ValidationError", err)
 	}
 	_, err = s.svc.ChangeRole(t.Context(), claimsOf(owner), 0, middleware.RoleEmployee)
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("a missing user: err = %v, want ErrNotFound", err)
+	if !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("a missing user: err = %v, want apperr.ErrNotFound", err)
 	}
 }
 
@@ -263,8 +265,8 @@ func TestDepartmentsNeedTheRightRole(t *testing.T) {
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
 	name := unique("Security")
 
-	if _, err := s.svc.CreateDepartment(t.Context(), claimsOf(supervisor), name); !errors.Is(err, ErrForbidden) {
-		t.Errorf("a supervisor adding a department: err = %v, want ErrForbidden", err)
+	if _, err := s.svc.CreateDepartment(t.Context(), claimsOf(supervisor), name); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("a supervisor adding a department: err = %v, want apperr.ErrForbidden", err)
 	}
 	created, err := s.svc.CreateDepartment(t.Context(), claimsOf(admin), "  "+name+" ")
 	if err != nil || created.Name != name {
@@ -272,22 +274,23 @@ func TestDepartmentsNeedTheRightRole(t *testing.T) {
 	}
 	s.departmentIDs = append(s.departmentIDs, created.ID)
 
-	if _, err := s.svc.ListDepartments(t.Context(), claimsOf(employee)); !errors.Is(err, ErrForbidden) {
-		t.Errorf("an employee listing departments: err = %v, want ErrForbidden", err)
+	if _, err := s.svc.ListDepartments(t.Context(), claimsOf(employee)); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("an employee listing departments: err = %v, want apperr.ErrForbidden", err)
 	}
 	if _, err := s.svc.ListDepartments(t.Context(), claimsOf(supervisor)); err != nil {
 		t.Errorf("a supervisor listing departments: err = %v, want none", err)
 	}
 
 	_, err = s.svc.RenameDepartment(t.Context(), claimsOf(supervisor), created.ID, "Nope")
-	if !errors.Is(err, ErrForbidden) {
-		t.Errorf("a supervisor renaming: err = %v, want ErrForbidden", err)
+	if !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("a supervisor renaming: err = %v, want apperr.ErrForbidden", err)
 	}
 	if _, err := s.svc.RenameDepartment(t.Context(), claimsOf(admin), created.ID, " "); !isValidationError(err) {
 		t.Errorf("an empty name: err = %v, want a ValidationError", err)
 	}
-	if err := s.svc.DeleteDepartment(t.Context(), claimsOf(supervisor), created.ID); !errors.Is(err, ErrForbidden) {
-		t.Errorf("a supervisor deleting: err = %v, want ErrForbidden", err)
+	err = s.svc.DeleteDepartment(t.Context(), claimsOf(supervisor), created.ID)
+	if !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("a supervisor deleting: err = %v, want apperr.ErrForbidden", err)
 	}
 	if err := s.svc.DeleteDepartment(t.Context(), claimsOf(admin), created.ID); err != nil {
 		t.Errorf("DeleteDepartment: %v", err)
@@ -347,11 +350,11 @@ func TestHRAdminCannotTouchASuperAdmin(t *testing.T) {
 	details := Details{FullName: "Renamed", IsActive: false}
 
 	// Only super_admin grants roles, so letting hr_admin remove them would lock the system.
-	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), owner.ID, details); !errors.Is(err, ErrForbidden) {
-		t.Errorf("hr_admin deactivating a super_admin: err = %v, want ErrForbidden", err)
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), owner.ID, details); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("hr_admin deactivating a super_admin: err = %v, want apperr.ErrForbidden", err)
 	}
-	if err := s.svc.Delete(t.Context(), claimsOf(admin), owner.ID); !errors.Is(err, ErrForbidden) {
-		t.Errorf("hr_admin deleting a super_admin: err = %v, want ErrForbidden", err)
+	if err := s.svc.Delete(t.Context(), claimsOf(admin), owner.ID); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("hr_admin deleting a super_admin: err = %v, want apperr.ErrForbidden", err)
 	}
 
 	// Same rank is still ordinary admin work, and a super_admin reaches everyone.
@@ -519,5 +522,60 @@ func TestARemovedManagerCannotBeAssigned(t *testing.T) {
 	})
 	if !isValidationError(err) {
 		t.Errorf("Create under a removed manager: err = %v, want a ValidationError", err)
+	}
+}
+
+func TestADefaultScheduleMustBeLive(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	employee := s.addUser(t, middleware.RoleEmployee, nil)
+	schedule := s.addSchedule(t)
+
+	created, err := s.svc.Create(t.Context(), claimsOf(admin), NewUser{
+		Email: unique("sched") + "@test.local", Password: "eight888",
+		FullName: "Budi", DefaultScheduleID: &schedule.ID,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	s.track(created)
+	if created.DefaultScheduleID == nil || *created.DefaultScheduleID != schedule.ID {
+		t.Errorf("created = %+v, want the schedule kept", created)
+	}
+
+	updated, err := s.svc.Replace(t.Context(), claimsOf(admin), employee.ID, Details{
+		FullName: "Renamed", IsActive: true, DefaultScheduleID: &schedule.ID,
+	})
+	if err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	if updated.DefaultScheduleID == nil {
+		t.Errorf("updated = %+v, want the schedule kept", updated)
+	}
+
+	// A retired schedule would leave the employee with hours nobody maintains; the foreign key
+	// cannot see deleted_at, so the check has to.
+	s.db.Exec("UPDATE work_schedules SET deleted_at = now() WHERE id = ?", schedule.ID)
+	_, err = s.svc.Create(t.Context(), claimsOf(admin), NewUser{
+		Email: unique("sched") + "@test.local", Password: "eight888",
+		FullName: "Budi", DefaultScheduleID: &schedule.ID,
+	})
+	if !isValidationError(err) {
+		t.Errorf("Create onto a retired schedule: err = %v, want a ValidationError", err)
+	}
+	_, err = s.svc.Replace(t.Context(), claimsOf(admin), employee.ID, Details{
+		FullName: "Renamed", IsActive: true, DefaultScheduleID: &schedule.ID,
+	})
+	if !isValidationError(err) {
+		t.Errorf("Replace onto a retired schedule: err = %v, want a ValidationError", err)
+	}
+
+	schedules := &Service{repo: NewRepository(failingDB(t, "work_schedules"))}
+	_, err = schedules.Create(t.Context(), claimsOf(admin), NewUser{
+		Email: unique("sched") + "@test.local", Password: "eight888",
+		FullName: "Budi", DefaultScheduleID: &schedule.ID,
+	})
+	if !errors.Is(err, errInjected) {
+		t.Errorf("schedule lookup: err = %v, want the database failure", err)
 	}
 }

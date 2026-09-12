@@ -1,20 +1,11 @@
 package user
 
 import (
-	"fmt"
 	"strings"
 
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 )
-
-// ValidationError is a rejected request; its message is safe to show the client.
-type ValidationError struct{ msg string }
-
-func (e *ValidationError) Error() string { return e.msg }
-
-func invalid(format string, args ...any) error {
-	return &ValidationError{msg: fmt.Sprintf(format, args...)}
-}
 
 // normalizeEmail makes lookups ignore case and surrounding space; users.email is stored lowercase.
 func normalizeEmail(email string) string {
@@ -26,9 +17,9 @@ func checkName(field, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	switch {
 	case name == "":
-		return "", invalid("%s is required", field)
+		return "", apperr.Invalid("%s is required", field)
 	case len(name) > 100:
-		return "", invalid("%s must be at most 100 characters", field)
+		return "", apperr.Invalid("%s must be at most 100 characters", field)
 	}
 	return name, nil
 }
@@ -38,11 +29,11 @@ func checkNewUser(email, password string) (string, error) {
 	email = normalizeEmail(email)
 	switch {
 	case !strings.Contains(email, "@"):
-		return "", invalid("email %q is not an email address", email)
+		return "", apperr.Invalid("email %q is not an email address", email)
 	case len(email) > 254:
-		return "", invalid("email must be at most 254 characters")
+		return "", apperr.Invalid("email must be at most 254 characters")
 	case len(password) < minPasswordLen:
-		return "", invalid("password must be at least %d bytes", minPasswordLen)
+		return "", apperr.Invalid("password must be at least %d bytes", minPasswordLen)
 	}
 	return email, nil
 }
@@ -50,7 +41,7 @@ func checkNewUser(email, password string) (string, error) {
 // checkRole keeps an unknown role out of the database, which would refuse it anyway.
 func checkRole(role middleware.Role) error {
 	if !role.Valid() {
-		return invalid("role %q is not one of employee, supervisor, hr_admin, super_admin", role)
+		return apperr.Invalid("role %q is not one of employee, supervisor, hr_admin, super_admin", role)
 	}
 	return nil
 }
@@ -59,7 +50,7 @@ func checkRole(role middleware.Role) error {
 // whose CYCLE clause keeps them from looping forever.
 func checkManager(userID int64, managerID *int64) error {
 	if managerID != nil && *managerID == userID {
-		return invalid("a user cannot be their own manager")
+		return apperr.Invalid("a user cannot be their own manager")
 	}
 	return nil
 }
@@ -75,11 +66,11 @@ type Page struct {
 func checkPage(page Page) (Page, error) {
 	switch {
 	case page.Limit < 1 || page.Limit > maxPageLimit:
-		return Page{}, invalid("limit must be between 1 and %d", maxPageLimit)
+		return Page{}, apperr.Invalid("limit must be between 1 and %d", maxPageLimit)
 	case page.Offset < 0:
-		return Page{}, invalid("offset cannot be negative")
+		return Page{}, apperr.Invalid("offset cannot be negative")
 	case page.Offset > maxPageOffset:
-		return Page{}, invalid("offset must be at most %d; narrow the listing instead", maxPageOffset)
+		return Page{}, apperr.Invalid("offset must be at most %d; narrow the listing instead", maxPageOffset)
 	}
 	return page, nil
 }

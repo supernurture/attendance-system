@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 )
 
 type Service struct {
@@ -21,21 +22,23 @@ func NewService(db *gorm.DB) *Service {
 
 // NewUser is what hr_admin supplies to add an employee; the role is granted separately.
 type NewUser struct {
-	Email        string
-	Password     string
-	FullName     string
-	JoinDate     time.Time
-	DepartmentID *int64
-	ManagerID    *int64
+	Email             string
+	Password          string
+	FullName          string
+	JoinDate          time.Time
+	DepartmentID      *int64
+	ManagerID         *int64
+	DefaultScheduleID *int64
 }
 
 // Details are the fields an update replaces wholesale.
 type Details struct {
-	FullName     string
-	IsActive     bool
-	JoinDate     time.Time
-	DepartmentID *int64
-	ManagerID    *int64
+	FullName          string
+	IsActive          bool
+	JoinDate          time.Time
+	DepartmentID      *int64
+	ManagerID         *int64
+	DefaultScheduleID *int64
 }
 
 // Me returns the caller's own record.
@@ -46,7 +49,7 @@ func (s *Service) Me(ctx context.Context, claims middleware.Claims) (User, error
 // List returns everyone the caller may see: a supervisor's subtree, or all of them for hr_admin up.
 func (s *Service) List(ctx context.Context, claims middleware.Claims, page Page) ([]User, error) {
 	if !claims.Role.AtLeast(middleware.RoleSupervisor) {
-		return nil, ErrForbidden
+		return nil, apperr.ErrForbidden
 	}
 
 	page, err := checkPage(page)
@@ -70,7 +73,7 @@ func (s *Service) Get(ctx context.Context, claims middleware.Claims, id int64) (
 // Create adds an employee as hr_admin; they start as an employee until a role is granted.
 func (s *Service) Create(ctx context.Context, claims middleware.Claims, next NewUser) (User, error) {
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
-		return User{}, ErrForbidden
+		return User{}, apperr.ErrForbidden
 	}
 
 	email, err := checkNewUser(next.Email, next.Password)
@@ -87,24 +90,28 @@ func (s *Service) Create(ctx context.Context, claims middleware.Claims, next New
 	if err := s.checkManagerFor(ctx, 0, next.ManagerID); err != nil {
 		return User{}, err
 	}
+	if err := s.checkSchedule(ctx, next.DefaultScheduleID); err != nil {
+		return User{}, err
+	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(next.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return User{}, invalid("password: %v", err) // bcrypt reports its own 72-byte maximum
+		return User{}, apperr.Invalid("password: %v", err) // bcrypt reports its own 72-byte maximum
 	}
 	if next.JoinDate.IsZero() {
 		next.JoinDate = time.Now()
 	}
 
 	user := User{
-		Email:        email,
-		PasswordHash: string(hash),
-		FullName:     fullName,
-		Role:         string(middleware.RoleEmployee),
-		IsActive:     true,
-		JoinDate:     next.JoinDate,
-		DepartmentID: next.DepartmentID,
-		ManagerID:    next.ManagerID,
+		Email:             email,
+		PasswordHash:      string(hash),
+		FullName:          fullName,
+		Role:              string(middleware.RoleEmployee),
+		IsActive:          true,
+		JoinDate:          next.JoinDate,
+		DepartmentID:      next.DepartmentID,
+		ManagerID:         next.ManagerID,
+		DefaultScheduleID: next.DefaultScheduleID,
 	}
 	if err := s.repo.Create(ctx, &user); err != nil {
 		return User{}, err
@@ -118,7 +125,7 @@ func (s *Service) Replace(
 	ctx context.Context, claims middleware.Claims, id int64, details Details,
 ) (User, error) {
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
-		return User{}, ErrForbidden
+		return User{}, apperr.ErrForbidden
 	}
 
 	fullName, err := checkName("full_name", details.FullName)
@@ -126,7 +133,7 @@ func (s *Service) Replace(
 		return User{}, err
 	}
 	if id == claims.UserID && !details.IsActive {
-		return User{}, invalid("an admin cannot deactivate their own account")
+		return User{}, apperr.Invalid("an admin cannot deactivate their own account")
 	}
 
 	before, err := s.repo.ByID(ctx, id)
@@ -134,12 +141,15 @@ func (s *Service) Replace(
 		return User{}, err
 	}
 	if !claims.Role.AtLeast(middleware.Role(before.Role)) {
-		return User{}, ErrForbidden
+		return User{}, apperr.ErrForbidden
 	}
 	if err := s.checkManagerFor(ctx, id, details.ManagerID); err != nil {
 		return User{}, err
 	}
 	if err := s.checkDepartment(ctx, details.DepartmentID); err != nil {
+		return User{}, err
+	}
+	if err := s.checkSchedule(ctx, details.DefaultScheduleID); err != nil {
 		return User{}, err
 	}
 	if details.JoinDate.IsZero() {
@@ -152,12 +162,13 @@ func (s *Service) Replace(
 	}
 
 	return s.repo.Replace(ctx, User{
-		ID:           id,
-		FullName:     fullName,
-		IsActive:     details.IsActive,
-		JoinDate:     details.JoinDate,
-		DepartmentID: details.DepartmentID,
-		ManagerID:    details.ManagerID,
+		ID:                id,
+		FullName:          fullName,
+		IsActive:          details.IsActive,
+		JoinDate:          details.JoinDate,
+		DepartmentID:      details.DepartmentID,
+		ManagerID:         details.ManagerID,
+		DefaultScheduleID: details.DefaultScheduleID,
 	}, audit)
 }
 
@@ -165,10 +176,10 @@ func (s *Service) Replace(
 // the same column the account stops working at once.
 func (s *Service) Delete(ctx context.Context, claims middleware.Claims, id int64) error {
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
-		return ErrForbidden
+		return apperr.ErrForbidden
 	}
 	if id == claims.UserID {
-		return invalid("an admin cannot delete their own account")
+		return apperr.Invalid("an admin cannot delete their own account")
 	}
 
 	// An hr_admin must not remove a super_admin: only super_admin grants roles, so that would leave
@@ -178,7 +189,7 @@ func (s *Service) Delete(ctx context.Context, claims middleware.Claims, id int64
 		return err
 	}
 	if !claims.Role.AtLeast(middleware.Role(target.Role)) {
-		return ErrForbidden
+		return apperr.ErrForbidden
 	}
 
 	audit := auditRow(claims.UserID, actionDeleted, id, `{"deleted": false}`, `{"deleted": true}`)
@@ -191,13 +202,13 @@ func (s *Service) ChangeRole(
 	ctx context.Context, claims middleware.Claims, id int64, role middleware.Role,
 ) (User, error) {
 	if !claims.Role.AtLeast(middleware.RoleSuperAdmin) {
-		return User{}, ErrForbidden
+		return User{}, apperr.ErrForbidden
 	}
 	if err := checkRole(role); err != nil {
 		return User{}, err
 	}
 	if id == claims.UserID {
-		return User{}, invalid("a super_admin cannot change their own role")
+		return User{}, apperr.Invalid("a super_admin cannot change their own role")
 	}
 
 	before, err := s.repo.ByID(ctx, id)
@@ -216,7 +227,7 @@ func (s *Service) ChangeRole(
 // ListDepartments is open to supervisor and above, who need the names to read reports.
 func (s *Service) ListDepartments(ctx context.Context, claims middleware.Claims) ([]Department, error) {
 	if !claims.Role.AtLeast(middleware.RoleSupervisor) {
-		return nil, ErrForbidden
+		return nil, apperr.ErrForbidden
 	}
 	return s.repo.ListDepartments(ctx)
 }
@@ -225,7 +236,7 @@ func (s *Service) CreateDepartment(
 	ctx context.Context, claims middleware.Claims, name string,
 ) (Department, error) {
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
-		return Department{}, ErrForbidden
+		return Department{}, apperr.ErrForbidden
 	}
 	name, err := checkName("name", name)
 	if err != nil {
@@ -243,7 +254,7 @@ func (s *Service) RenameDepartment(
 	ctx context.Context, claims middleware.Claims, id int64, name string,
 ) (Department, error) {
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
-		return Department{}, ErrForbidden
+		return Department{}, apperr.ErrForbidden
 	}
 	name, err := checkName("name", name)
 	if err != nil {
@@ -254,7 +265,7 @@ func (s *Service) RenameDepartment(
 
 func (s *Service) DeleteDepartment(ctx context.Context, claims middleware.Claims, id int64) error {
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
-		return ErrForbidden
+		return apperr.ErrForbidden
 	}
 	return s.repo.DeleteDepartment(ctx, id)
 }
@@ -270,7 +281,23 @@ func (s *Service) checkDepartment(ctx context.Context, departmentID *int64) erro
 		return err
 	}
 	if !exists {
-		return invalid("department_id %d does not exist", *departmentID)
+		return apperr.Invalid("department_id %d does not exist", *departmentID)
+	}
+	return nil
+}
+
+// checkSchedule refuses a work schedule that was retired; the foreign key would still accept it.
+func (s *Service) checkSchedule(ctx context.Context, scheduleID *int64) error {
+	if scheduleID == nil {
+		return nil
+	}
+
+	exists, err := s.repo.ScheduleExists(ctx, *scheduleID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return apperr.Invalid("default_schedule_id %d does not exist", *scheduleID)
 	}
 	return nil
 }
@@ -291,7 +318,7 @@ func (s *Service) checkManagerFor(ctx context.Context, id int64, managerID *int6
 		return err
 	}
 	if !exists {
-		return invalid("manager_id %d does not exist", *managerID)
+		return apperr.Invalid("manager_id %d does not exist", *managerID)
 	}
 
 	below, err := s.repo.InSubtree(ctx, id, *managerID)
@@ -299,7 +326,7 @@ func (s *Service) checkManagerFor(ctx context.Context, id int64, managerID *int6
 		return err
 	}
 	if below {
-		return invalid("that manager reports to this user, which would make the hierarchy a loop")
+		return apperr.Invalid("that manager reports to this user, which would make the hierarchy a loop")
 	}
 	return nil
 }
@@ -310,7 +337,7 @@ func (s *Service) reach(ctx context.Context, claims middleware.Claims, id int64)
 		return nil
 	}
 	if !claims.Role.AtLeast(middleware.RoleSupervisor) {
-		return ErrForbidden
+		return apperr.ErrForbidden
 	}
 
 	inSubtree, err := s.repo.InSubtree(ctx, claims.UserID, id)
@@ -318,7 +345,7 @@ func (s *Service) reach(ctx context.Context, claims middleware.Claims, id int64)
 		return err
 	}
 	if !inSubtree {
-		return ErrForbidden
+		return apperr.ErrForbidden
 	}
 	return nil
 }
