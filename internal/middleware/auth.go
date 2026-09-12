@@ -15,7 +15,7 @@ import (
 // Claims identifies the caller of an authenticated request.
 type Claims struct {
 	UserID int64
-	Role   string
+	Role   Role
 }
 
 type claimsContextKey struct{}
@@ -29,7 +29,7 @@ type accessClaims struct {
 func SignAccessToken(secret []byte, claims Claims, ttl time.Duration) string {
 	now := time.Now()
 	signed, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims{
-		Role: claims.Role,
+		Role: string(claims.Role),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   strconv.FormatInt(claims.UserID, 10),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -78,5 +78,5 @@ func parseAccessToken(secret []byte, raw string) (Claims, error) {
 	if err != nil {
 		return Claims{}, fmt.Errorf("subject %q is not a user id", parsed.Subject)
 	}
-	return Claims{UserID: userID, Role: parsed.Role}, nil
+	return Claims{UserID: userID, Role: Role(parsed.Role)}, nil
 }

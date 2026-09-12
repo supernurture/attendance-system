@@ -112,7 +112,8 @@ func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {
 		return fmt.Errorf("seed admin password: %w", err)
 	}
 	if err := s.repo.CreateUserIfAbsent(ctx, User{
-		Email: email, PasswordHash: string(hash), FullName: "Super Admin", Role: roleSuperAdmin, IsActive: true,
+		Email: email, PasswordHash: string(hash), FullName: "Super Admin",
+		Role: string(middleware.RoleSuperAdmin), IsActive: true,
 	}); err != nil {
 		return fmt.Errorf("seed admin: %w", err)
 	}
@@ -135,7 +136,7 @@ func (s *Service) countAttempt(ctx context.Context, key string, window time.Dura
 }
 
 func (s *Service) pair(user User, refresh string) TokenPair {
-	claims := middleware.Claims{UserID: user.ID, Role: user.Role}
+	claims := middleware.Claims{UserID: user.ID, Role: middleware.Role(user.Role)}
 	return TokenPair{AccessToken: middleware.SignAccessToken(s.secret, claims, AccessTTL), RefreshToken: refresh}
 }
 

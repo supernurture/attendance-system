@@ -24,7 +24,6 @@ const (
 
 	minPasswordLen = 8 // the maximum, 72 bytes, is bcrypt's own and it reports it
 
-	roleSuperAdmin = "super_admin"
 )
 
 var (
