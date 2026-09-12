@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"attendance-system/pkg/database"
 
 	usercontract "attendance-system/internal/api/server/oapicodegen/user"
 	"attendance-system/internal/middleware"
@@ -33,10 +36,12 @@ func envOr(key, fallback string) string {
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable connect_timeout=2",
-		envOr("POSTGRES_TEST_HOST", "localhost"), envOr("POSTGRES_TEST_PORT", "5432"),
+	// Built the way production builds it, so the tests run with the same pinned session timezone.
+	port, _ := strconv.Atoi(envOr("POSTGRES_TEST_PORT", "5432"))
+	dsn := database.PostgresDSN(
+		envOr("POSTGRES_TEST_HOST", "localhost"), port,
 		envOr("POSTGRES_TEST_USER", "postgres"), envOr("POSTGRES_TEST_PASSWORD", "postgres"),
-		envOr("POSTGRES_TEST_DB", "attendance"))
+		envOr("POSTGRES_TEST_DB", "attendance"), "sslmode=disable connect_timeout=2")
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	if err == nil {
 		err = db.Exec("SELECT 1").Error
@@ -65,6 +70,7 @@ type server struct {
 
 	userIDs       []int64
 	departmentIDs []int64
+	scheduleIDs   []int64
 }
 
 func newServer(t *testing.T) *server {
@@ -87,6 +93,7 @@ func newServer(t *testing.T) *server {
 		s.db.Exec("DELETE FROM refresh_tokens WHERE user_id IN ?", s.userIDs)
 		s.db.Exec("DELETE FROM users WHERE id IN ?", s.userIDs)
 		s.db.Exec("DELETE FROM departments WHERE id IN ?", s.departmentIDs)
+		s.db.Exec("DELETE FROM work_schedules WHERE id IN ?", s.scheduleIDs)
 	})
 	return s
 }
@@ -120,6 +127,21 @@ func (s *server) addDepartment(t *testing.T, name string) Department {
 	}
 	s.departmentIDs = append(s.departmentIDs, department.ID)
 	return department
+}
+
+// addSchedule stores a work schedule, which is all this module needs of one: something to point at.
+func (s *server) addSchedule(t *testing.T) workSchedule {
+	t.Helper()
+
+	var id int64
+	err := s.db.Raw(`INSERT INTO work_schedules (name, start_time, end_time, workdays)
+		VALUES (?, '08:00', '17:00', '{1,2,3,4,5}') RETURNING id`, unique("schedule")).Scan(&id).Error
+	if err != nil {
+		t.Fatalf("create work schedule: %v", err)
+	}
+
+	s.scheduleIDs = append(s.scheduleIDs, id)
+	return workSchedule{ID: id}
 }
 
 // track registers a row the service created, so the cleanup above reaches it too.

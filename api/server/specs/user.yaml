@@ -369,6 +369,11 @@ components:
           type: integer
           format: int64
           nullable: true
+        default_schedule_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The work schedule this employee keeps when the shift roster says nothing.
     Role:
       type: string
       enum:
@@ -403,6 +408,11 @@ components:
           type: integer
           format: int64
           nullable: true
+        default_schedule_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The work schedule this employee keeps when the shift roster says nothing.
     UpdateUserRequest:
       type: object
       required:
@@ -425,6 +435,11 @@ components:
           type: integer
           format: int64
           nullable: true
+        default_schedule_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The work schedule this employee keeps when the shift roster says nothing.
     UpdateRoleRequest:
       type: object
       required:

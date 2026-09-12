@@ -5,10 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,6 +19,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"attendance-system/pkg/database"
 
 	authcontract "attendance-system/internal/api/server/oapicodegen/auth"
 	"attendance-system/internal/middleware"
@@ -39,10 +41,12 @@ func envOr(key, fallback string) string {
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable connect_timeout=2",
-		envOr("POSTGRES_TEST_HOST", "localhost"), envOr("POSTGRES_TEST_PORT", "5432"),
+	// Built the way production builds it, so the tests run with the same pinned session timezone.
+	port, _ := strconv.Atoi(envOr("POSTGRES_TEST_PORT", "5432"))
+	dsn := database.PostgresDSN(
+		envOr("POSTGRES_TEST_HOST", "localhost"), port,
 		envOr("POSTGRES_TEST_USER", "postgres"), envOr("POSTGRES_TEST_PASSWORD", "postgres"),
-		envOr("POSTGRES_TEST_DB", "attendance"))
+		envOr("POSTGRES_TEST_DB", "attendance"), "sslmode=disable connect_timeout=2")
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	if err == nil {
 		err = db.Exec("SELECT 1").Error

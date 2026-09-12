@@ -41,7 +41,9 @@ func (e Role) Valid() bool {
 
 // CreateUserRequest defines model for CreateUserRequest.
 type CreateUserRequest struct {
-	DepartmentId *int64 `json:"department_id,omitempty"`
+	// DefaultScheduleId The work schedule this employee keeps when the shift roster says nothing.
+	DefaultScheduleId *int64 `json:"default_schedule_id,omitempty"`
+	DepartmentId      *int64 `json:"department_id,omitempty"`
 
 	// Email Example: budi@example.com
 	Email    string `json:"email"`
@@ -80,23 +82,27 @@ type UpdateRoleRequest struct {
 
 // UpdateUserRequest defines model for UpdateUserRequest.
 type UpdateUserRequest struct {
-	DepartmentId *int64             `json:"department_id,omitempty"`
-	FullName     string             `json:"full_name"`
-	IsActive     bool               `json:"is_active"`
-	JoinDate     openapi_types.Date `json:"join_date"`
-	ManagerId    *int64             `json:"manager_id,omitempty"`
+	// DefaultScheduleId The work schedule this employee keeps when the shift roster says nothing.
+	DefaultScheduleId *int64             `json:"default_schedule_id,omitempty"`
+	DepartmentId      *int64             `json:"department_id,omitempty"`
+	FullName          string             `json:"full_name"`
+	IsActive          bool               `json:"is_active"`
+	JoinDate          openapi_types.Date `json:"join_date"`
+	ManagerId         *int64             `json:"manager_id,omitempty"`
 }
 
 // User defines model for User.
 type User struct {
-	DepartmentId *int64             `json:"department_id,omitempty"`
-	Email        string             `json:"email"`
-	FullName     string             `json:"full_name"`
-	Id           int64              `json:"id"`
-	IsActive     bool               `json:"is_active"`
-	JoinDate     openapi_types.Date `json:"join_date"`
-	ManagerId    *int64             `json:"manager_id,omitempty"`
-	Role         Role               `json:"role"`
+	// DefaultScheduleId The work schedule this employee keeps when the shift roster says nothing.
+	DefaultScheduleId *int64             `json:"default_schedule_id,omitempty"`
+	DepartmentId      *int64             `json:"department_id,omitempty"`
+	Email             string             `json:"email"`
+	FullName          string             `json:"full_name"`
+	Id                int64              `json:"id"`
+	IsActive          bool               `json:"is_active"`
+	JoinDate          openapi_types.Date `json:"join_date"`
+	ManagerId         *int64             `json:"manager_id,omitempty"`
+	Role              Role               `json:"role"`
 }
 
 // BadRequest defines model for BadRequest.

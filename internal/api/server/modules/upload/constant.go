@@ -1,6 +1,10 @@
 package upload
 
-import "errors"
+import (
+	"fmt"
+
+	"attendance-system/internal/pkg/apperr"
+)
 
 type Purpose string
 
@@ -27,4 +31,4 @@ var rules = map[Purpose]rule{
 const sniffBytes = 512
 
 // ErrForbidden means the key belongs to another user.
-var ErrForbidden = errors.New("upload key belongs to another user")
+var ErrForbidden = fmt.Errorf("%w: upload key belongs to another user", apperr.ErrForbidden)

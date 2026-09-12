@@ -12,8 +12,10 @@ import (
 var gormOpen = gorm.Open
 
 // PostgresDSN builds a postgres connection string, quoting every value so a password cannot smuggle in parameters.
+// TimeZone comes last so it cannot be overridden: a `date` column written from a timestamp parameter is
+// cast at the session's zone, which silently stores the day before when that zone is west of UTC.
 func PostgresDSN(host string, port int, user, password, database, opts string) string {
-	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s %s",
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s %s TimeZone=UTC",
 		pgQuote(host), port, pgQuote(user), pgQuote(password), pgQuote(database), opts)
 }
 

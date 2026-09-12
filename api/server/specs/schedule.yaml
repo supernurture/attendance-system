@@ -1,0 +1,734 @@
+openapi: 3.0.3
+info:
+  title: Schedule API
+  description: |
+    Work schedules, the shift roster, public holidays, and office locations. Whether a given date is a
+    working day follows one rule: the roster decides first, then the person's own schedule, and a
+    holiday the schedule observes turns either of them off.
+  version: 1.0.0
+tags:
+  - name: schedule
+  - name: holiday
+  - name: office-location
+  - name: shift-assignment
+security:
+  - bearerAuth: []
+paths:
+  /me/schedule:
+    get:
+      operationId: getMySchedule
+      tags:
+        - schedule
+      summary: Get the caller's working days
+      description: |
+        One entry per date in the span, each saying whether it is a working day and why. The hours are
+        the ones that apply on that date, which may come from the roster rather than the caller's own
+        schedule.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: Inclusive, and at most 366 days after from.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: The caller's days, in date order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScheduledDay'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /work-schedules:
+    get:
+      operationId: listWorkSchedules
+      tags:
+        - schedule
+      summary: List work schedules
+      description: supervisor and above, since they are what a roster is built from.
+      responses:
+        '200':
+          description: Work schedules by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkSchedule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createWorkSchedule
+      tags:
+        - schedule
+      summary: Add a work schedule
+      description: hr_admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkScheduleRequest'
+      responses:
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /work-schedules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      operationId: updateWorkSchedule
+      tags:
+        - schedule
+      summary: Replace a work schedule
+      description: hr_admin only, and every field is replaced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkScheduleRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteWorkSchedule
+      tags:
+        - schedule
+      summary: Remove a work schedule
+      description: |
+        hr_admin only, and refused while anyone keeps it or is rostered onto it: their days could no
+        longer be resolved. The row is kept with deleted_at set, so past attendance still reads back.
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /holidays:
+    get:
+      operationId: listHolidays
+      tags:
+        - holiday
+      summary: List public holidays in a span
+      description: supervisor and above.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: Inclusive, and at most 366 days after from.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Holidays by date.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Holiday'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createHoliday
+      tags:
+        - holiday
+      summary: Add a public holiday
+      description: hr_admin only. One holiday per date.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HolidayRequest'
+      responses:
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Holiday'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /holidays/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      operationId: updateHoliday
+      tags:
+        - holiday
+      summary: Replace a public holiday
+      description: |
+        hr_admin only. Editing a date that has already passed is written to audit_logs: it changes
+        whether people were off or absent, which the reports have already answered.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HolidayRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Holiday'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteHoliday
+      tags:
+        - holiday
+      summary: Remove a public holiday
+      description: hr_admin only. Removing a past holiday is written to audit_logs.
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /office-locations:
+    get:
+      operationId: listOfficeLocations
+      tags:
+        - office-location
+      summary: List office locations
+      description: supervisor and above.
+      responses:
+        '200':
+          description: Offices by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OfficeLocation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createOfficeLocation
+      tags:
+        - office-location
+      summary: Add an office location
+      description: hr_admin only. The circle is what check-in is later measured against.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfficeLocationRequest'
+      responses:
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeLocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /office-locations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      operationId: updateOfficeLocation
+      tags:
+        - office-location
+      summary: Replace an office location
+      description: hr_admin only, and every field is replaced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfficeLocationRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeLocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteOfficeLocation
+      tags:
+        - office-location
+      summary: Remove an office location
+      description: hr_admin only. The row is kept with deleted_at set, so past check-ins still read back.
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /shift-assignments:
+    get:
+      operationId: listShiftAssignments
+      tags:
+        - shift-assignment
+      summary: List the roster for a span
+      description: hr_admin only, since the roster is theirs to write.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: Inclusive, and at most 366 days after from.
+          schema:
+            type: string
+            format: date
+        - name: user_id
+          in: query
+          description: Only this person's roster.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Roster entries by date, then by person.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShiftAssignment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: assignShifts
+      tags:
+        - shift-assignment
+      summary: Write a batch of roster
+      description: |
+        hr_admin only, up to 500 entries, and each one replaces whatever that person already had on
+        that date. An entry with no schedule_id is a planned day off. Entries on a date that has
+        already passed are written to audit_logs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignShiftsRequest'
+      responses:
+        '200':
+          description: The roster as written.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShiftAssignment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /shift-assignments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      operationId: deleteShiftAssignment
+      tags:
+        - shift-assignment
+      summary: Remove a roster entry
+      description: |
+        hr_admin only; the person falls back to their own schedule. Removing a past-dated entry is
+        written to audit_logs.
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: The request breaks a rule; the message says which.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid access token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller's role does not reach this.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such record.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The date is taken, or the record is still in use.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    ScheduledDay:
+      type: object
+      required:
+        - date
+        - working
+        - reason
+      properties:
+        date:
+          type: string
+          format: date
+        working:
+          type: boolean
+        reason:
+          type: string
+          description: |
+            Why the day is or is not worked: shift (the roster names a schedule), default (the
+            caller's own schedule covers this weekday), assigned_off (the roster names no schedule),
+            holiday (a holiday the schedule observes), not_a_workday (anything else).
+          enum:
+            - shift
+            - default
+            - assigned_off
+            - holiday
+            - not_a_workday
+        holiday_name:
+          type: string
+          description: Set whenever a holiday falls on the date, whether the schedule observes it or not.
+        schedule:
+          $ref: '#/components/schemas/WorkSchedule'
+    WorkSchedule:
+      type: object
+      required:
+        - id
+        - name
+        - start_time
+        - end_time
+        - grace_minutes
+        - break_minutes
+        - workdays
+        - observes_holidays
+        - crosses_midnight
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        start_time:
+          type: string
+          example: '08:00'
+        end_time:
+          type: string
+          example: '17:00'
+        grace_minutes:
+          type: integer
+        break_minutes:
+          type: integer
+        workdays:
+          type: array
+          items:
+            type: integer
+        observes_holidays:
+          type: boolean
+        crosses_midnight:
+          type: boolean
+          description: Derived from the two times, never stored, so they cannot disagree.
+    WorkScheduleRequest:
+      type: object
+      required:
+        - name
+        - start_time
+        - end_time
+        - workdays
+      properties:
+        name:
+          type: string
+          example: Shift Malam
+        start_time:
+          type: string
+          description: HH:MM or HH:MM:SS. An end at or before the start means the shift crosses midnight.
+          example: '22:00'
+        end_time:
+          type: string
+          example: '06:00'
+        grace_minutes:
+          type: integer
+          description: Minutes of lateness still counted as on time, 0 to 240. Defaults to 0.
+          example: 15
+        break_minutes:
+          type: integer
+          description: Unpaid break, 0 to 480, and shorter than the shift. Defaults to 0.
+          example: 60
+        workdays:
+          type: array
+          description: ISO weekdays, 1 (Monday) to 7 (Sunday).
+          items:
+            type: integer
+          example: [1, 2, 3, 4, 5]
+        observes_holidays:
+          type: boolean
+          description: Whether a public holiday turns this schedule off. Defaults to false.
+    Holiday:
+      type: object
+      required:
+        - id
+        - date
+        - name
+      properties:
+        id:
+          type: integer
+          format: int64
+        date:
+          type: string
+          format: date
+        name:
+          type: string
+    HolidayRequest:
+      type: object
+      required:
+        - date
+        - name
+      properties:
+        date:
+          type: string
+          format: date
+        name:
+          type: string
+          example: Hari Kemerdekaan
+    OfficeLocation:
+      type: object
+      required:
+        - id
+        - name
+        - lat
+        - lng
+        - radius_m
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        radius_m:
+          type: integer
+    OfficeLocationRequest:
+      type: object
+      required:
+        - name
+        - lat
+        - lng
+        - radius_m
+      properties:
+        name:
+          type: string
+          example: Kantor Pusat
+        lat:
+          type: number
+          format: double
+          example: -6.2088
+        lng:
+          type: number
+          format: double
+          example: 106.8456
+        radius_m:
+          type: integer
+          description: 10 to 10000 metres.
+          example: 100
+    ShiftAssignment:
+      type: object
+      required:
+        - user_id
+        - work_date
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        work_date:
+          type: string
+          format: date
+        schedule_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Null is a planned day off.
+        note:
+          type: string
+    AssignShiftsRequest:
+      type: object
+      required:
+        - assignments
+      properties:
+        assignments:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/ShiftAssignmentRequest'
+    ShiftAssignmentRequest:
+      type: object
+      required:
+        - user_id
+        - work_date
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        work_date:
+          type: string
+          format: date
+        schedule_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Leave out or send null for a planned day off.
+        note:
+          type: string
+          description: At most 200 characters.
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string

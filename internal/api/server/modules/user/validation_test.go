@@ -1,11 +1,11 @@
 package user
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
 	"attendance-system/internal/middleware"
+	"attendance-system/internal/pkg/apperr"
 )
 
 func TestNormalizeEmail(t *testing.T) {
@@ -71,8 +71,7 @@ func TestCheckManager(t *testing.T) {
 }
 
 func isValidationError(err error) bool {
-	_, ok := errors.AsType[*ValidationError](err)
-	return ok
+	return apperr.IsValidation(err)
 }
 
 func TestCheckPage(t *testing.T) {
