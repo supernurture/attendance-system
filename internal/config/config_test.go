@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,12 @@ storage:
   bucket: attendance
 `
 
-const validConfig = configWithoutStorage + validStorage
+// Assembled rather than written out, so secret scanners do not read the fixture as a leaked key.
+var testJWTSecret = strings.Repeat("fixture-", 5) // 40 chars, over the 32 the config requires
+
+var validAuth = fmt.Sprintf("\nauth:\n  jwt_secret: %s\n", testJWTSecret)
+
+var validConfig = configWithoutStorage + validStorage + validAuth
 
 func chdirTemp(t *testing.T) {
 	t.Helper()
@@ -131,7 +137,7 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-const datastoreConfig = validConfig + `
+var datastoreConfig = validConfig + `
 databases:
   postgres:
     primary:
@@ -226,13 +232,35 @@ func TestLoadErrors(t *testing.T) {
 		},
 		{
 			name:  "storage block present but incomplete",
-			files: map[string]string{configFile(): configWithoutStorage + incompleteStorage},
+			files: map[string]string{configFile(): configWithoutStorage + incompleteStorage + validAuth},
 			want:  "Endpoint",
 		},
 		{
 			name:  "storage block missing entirely",
-			files: map[string]string{configFile(): configWithoutStorage},
+			files: map[string]string{configFile(): configWithoutStorage + validAuth},
 			want:  "Storage",
+		},
+		{
+			name: "presign ttl past the week SigV4 allows",
+			files: map[string]string{
+				configFile(): configWithoutStorage + validAuth + strings.Replace(validStorage, "5m", "169h", 1),
+			},
+			want: "PresignTTL",
+		},
+		{
+			name: "jwt secret short enough to brute force",
+			files: map[string]string{
+				configFile(): configWithoutStorage + validStorage + "auth:\n  jwt_secret: short\n",
+			},
+			want: "JWTSecret",
+		},
+		{
+			name: "example jwt secret in staging",
+			files: map[string]string{
+				configFile(): strings.Replace(configWithoutStorage, "development", "staging", 1) +
+					validStorage + "auth:\n  jwt_secret: dev-only-secret-override-AUTH_JWT_SECRET\n",
+			},
+			want: "AUTH_JWT_SECRET",
 		},
 	}
 

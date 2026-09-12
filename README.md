@@ -1,82 +1,86 @@
 # attendance-system
 
-Backend sistem absensi karyawan: autentikasi, RBAC berjenjang, absensi dengan verifikasi GPS +
-selfie, daily report, pengajuan cuti dengan approval, dan report rekap untuk atasan.
+Employee attendance backend: authentication, tiered RBAC, attendance with GPS + selfie
+verification, daily reports, leave requests with approval, and summary reports for supervisors.
 
-Satu binary Go + PostgreSQL + object storage S3 (Cloudflare R2 di produksi, MinIO saat
+A single Go binary + PostgreSQL + S3 object storage (Cloudflare R2 in production, MinIO in
 development).
 
 ## Status
 
-Dibangun bertahap dalam 7 fase — rencana lengkapnya di [`docs/plan.md`](docs/plan.md).
-**Fase 0 selesai** — kerangka, dependensi, dan migrasi.
-Belum ada endpoint domain; yang jalan baru `GET /health`.
+Built incrementally in 7 phases — the full plan is in [`docs/plan.md`](docs/plan.md).
+**Phases 0–1 are done** — skeleton, migrations, auth (login/refresh/logout), and presigned uploads.
+Live endpoints: `GET /health`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`,
+`POST /uploads/intent`.
 
-## Menjalankan
+To get a first account, set `AUTH_SEED_ADMIN_EMAIL` and `AUTH_SEED_ADMIN_PASSWORD` in `.env`; the
+API creates that super_admin at startup if the email is free.
+
+## Running
 
 ```sh
 cp configs/config.example.yaml configs/config.yaml
 cp .env.example .env
 
-docker compose up -d --wait  # postgres, redis, minio; --wait sampai bucket-nya jadi
-make migrate-up             # terapkan migrasi
-make run                    # API di :8080
+docker compose up -d --wait  # postgres, redis, minio; --wait until the bucket exists
+make migrate-up             # apply migrations
+make run                    # API on :8080
 
 curl localhost:8080/health
 ```
 
-## Perintah
+## Commands
 
-`make help` menampilkan semuanya. Yang sering dipakai:
+`make help` lists everything. The common ones:
 
-| Perintah | Kegunaan |
+| Command | Purpose |
 |---|---|
-| `make run` | jalankan API (`APP=migrate` untuk binary satunya) |
-| `make check` | fmt-check + vet + lint + test (persis yang dijalankan CI) |
-| `make test` | test dengan race detector |
-| `make cover` | laporan coverage di browser |
-| `make fmt` | rapikan format (`check` hanya memverifikasi) |
-| `make migrate-up` / `migrate-down` / `migrate-status` | migrasi goose |
-| `make oapicodegen` | generate kode server dari spec OpenAPI |
+| `make run` | run the API (`APP=migrate` for the other binary) |
+| `make check` | fmt-check + vet + lint + test (exactly what CI runs) |
+| `make test` | tests with the race detector |
+| `make cover` | coverage report in the browser |
+| `make fmt` | fix formatting (`check` only verifies) |
+| `make migrate-up` / `migrate-down` / `migrate-status` | goose migrations |
+| `make oapicodegen` | generate server code from the OpenAPI specs |
 
-## Struktur
+## Layout
 
 ```
-api/server/specs/       spec OpenAPI, satu file per modul
+api/server/specs/       OpenAPI specs, one file per module
 cmd/api/                HTTP server
-cmd/migrate/            runner migrasi goose
+cmd/migrate/            goose migration runner
 internal/api/server/
-  modules/<nama>/       handler -> service -> repository
-  oapicodegen/          kode hasil generate (jangan diedit)
-internal/config/        pemuat config (configs/config.yaml + .env + env)
-internal/container/     dependensi bersama, dibuka sekali saat startup
-internal/db/migrations/ migrasi SQL, di-embed ke dalam binary
+  modules/<name>/       handler -> service -> repository
+  oapicodegen/          generated code (do not edit)
+internal/config/        config loader (configs/config.yaml + .env + env)
+internal/container/     shared dependencies, opened once at startup
+internal/db/migrations/ SQL migrations, embedded in the binary
 internal/middleware/    request id, access log, recovery, timeout, CORS, security headers
-internal/pkg/           helper generik, dipakai bersama di dalam modul ini (storage, util)
-pkg/                    pembungkus yang boleh diimpor modul lain
+internal/pkg/           generic helpers shared only within this module (storage, util)
+pkg/                    wrappers other modules may import
   database, redis, logger
-docs/plan.md            rencana 7 fase
+docs/plan.md            the 7-phase plan
 ```
 
-Menambah modul: tulis `api/server/specs/<nama>.yaml`, jalankan `make oapicodegen`, implementasikan
-`StrictServerInterface` yang dihasilkan di `internal/api/server/modules/<nama>/`, lalu daftarkan di
-`internal/api/server/router.go`. Aturan validasi hidup di **service**, bukan handler.
+Adding a module: write `api/server/specs/<name>.yaml`, run `make oapicodegen`, implement the
+generated `StrictServerInterface` in `internal/api/server/modules/<name>/`, then register it in
+`internal/api/server/router.go`. Validation rules live in the **service**, not the handler.
 
-## Test yang butuh service
+## Tests that need services
 
-Test `cmd/migrate` dan `internal/pkg/storage` otomatis `t.Skip` kalau Postgres/MinIO tidak
-terjangkau, jadi `make check` tetap hijau tanpa menjalankan apa pun. Kalau Anda menggeser port
-compose lewat `.env`, beri tahu test-nya juga:
+The `cmd/migrate` and `internal/pkg/storage` tests `t.Skip` automatically when Postgres/MinIO is
+unreachable, so `make check` stays green without anything running. If you moved the compose ports
+via `.env`, tell the tests too:
 
 ```sh
 POSTGRES_TEST_PORT=5433 make check
 ```
 
-CI menyetel `POSTGRES_TEST_REQUIRED` dan `STORAGE_TEST_REQUIRED` supaya skip di sana jadi gagal.
+CI sets `POSTGRES_TEST_REQUIRED` and `STORAGE_TEST_REQUIRED` so a skip there becomes a failure.
 
-## Catatan
+## Notes
 
-- Skema dipegang goose, bukan `AutoMigrate` GORM.
-- Semua timestamp `timestamptz` UTC; tanggal kerja disimpan sebagai kolom `date` terpisah.
-- File tidak pernah melewati server: klien PUT/GET langsung ke object storage lewat presigned URL
-  yang ditandatangani server.
+- The schema is owned by goose, not GORM `AutoMigrate`.
+- All timestamps are `timestamptz` UTC; the work date is stored as a separate `date` column.
+- Files never pass through the server: clients PUT/GET directly to object storage via presigned
+  URLs signed by the server.

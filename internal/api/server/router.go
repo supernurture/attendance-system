@@ -1,15 +1,29 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"attendance-system/internal/api/server/modules/auth"
 	"attendance-system/internal/api/server/modules/health"
+	"attendance-system/internal/api/server/modules/upload"
+	authcontract "attendance-system/internal/api/server/oapicodegen/auth"
 	healthcontract "attendance-system/internal/api/server/oapicodegen/health"
+	uploadcontract "attendance-system/internal/api/server/oapicodegen/upload"
 	"attendance-system/internal/config"
 	"attendance-system/internal/container"
 	"attendance-system/internal/middleware"
+)
+
+const (
+	postgresName = "primary"
+	redisName    = "cache"
+
+	seedTimeout = 10 * time.Second
 )
 
 // NewRouter builds the gin engine: mode, trusted proxies, the middleware chain, and every module's generated routes.
@@ -25,11 +39,67 @@ func NewRouter(cfg *config.Config, deps *container.Container) (*gin.Engine, erro
 	router.ContextWithFallback = true
 	router.Use(middleware.Default(cfg, deps.Logger)...)
 
-	register(router, deps)
+	if err := register(router, cfg, deps); err != nil {
+		return nil, err
+	}
 	return router, nil
 }
 
-func register(router gin.IRouter, _ *container.Container) {
-	healthcontract.RegisterHandlers(
-		router, healthcontract.NewStrictHandler(health.NewHandler(), nil))
+func register(router gin.IRouter, cfg *config.Config, deps *container.Container) error {
+	db, ok := deps.Postgres[postgresName]
+	if !ok {
+		return fmt.Errorf("databases.postgres.%s is required in the config", postgresName)
+	}
+	cache, ok := deps.Redis[redisName]
+	if !ok {
+		return fmt.Errorf("redis.%s is required in the config", redisName)
+	}
+
+	secret := []byte(cfg.Auth.JWTSecret)
+	authSvc := auth.NewService(db, cache, secret)
+	if err := seedAdmin(cfg.Auth, authSvc); err != nil {
+		return err
+	}
+
+	healthcontract.RegisterHandlers(router,
+		healthcontract.NewStrictHandlerWithOptions(health.NewHandler(), nil, healthOptions))
+	authcontract.RegisterHandlers(router,
+		authcontract.NewStrictHandlerWithOptions(auth.NewHandler(authSvc), nil, authOptions))
+
+	protected := router.Group("", middleware.Auth(secret))
+	uploadHandler := upload.NewHandler(upload.NewService(deps.Storage))
+	uploadcontract.RegisterHandlers(protected,
+		uploadcontract.NewStrictHandlerWithOptions(uploadHandler, nil, uploadOptions))
+	return nil
+}
+
+func seedAdmin(cfg config.Auth, svc *auth.Service) error {
+	if cfg.SeedAdminEmail == "" {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), seedTimeout)
+	defer cancel()
+	return svc.SeedAdmin(ctx, cfg.SeedAdminEmail, cfg.SeedAdminPassword)
+}
+
+var (
+	healthOptions = healthcontract.StrictGinServerOptions{
+		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
+	}
+	authOptions = authcontract.StrictGinServerOptions{
+		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
+	}
+	uploadOptions = uploadcontract.StrictGinServerOptions{
+		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
+	}
+)
+
+func badRequest(c *gin.Context, err error) {
+	c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+}
+
+func internalError(c *gin.Context, err error) {
+	_ = c.Error(err)
+	c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 }

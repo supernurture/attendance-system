@@ -2,8 +2,11 @@ package storage
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -50,6 +53,7 @@ func put(t *testing.T, url, contentType string, body []byte) int {
 		t.Fatalf("build PUT: %v", err)
 	}
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("If-None-Match", "*")
 	req.ContentLength = int64(len(body))
 
 	resp, err := http.DefaultClient.Do(req)
@@ -69,6 +73,7 @@ func TestPresignRoundTrip(t *testing.T) {
 	const contentType = "image/jpeg"
 	key := "test/roundtrip-" + t.Name() + ".bin"
 	body := []byte("selfie bytes, pretend this is a JPEG")
+	t.Cleanup(func() { _ = store.Delete(context.Background(), key) }) // write-once: a rerun needs it gone
 
 	upload, err := store.PresignPut(ctx, key, contentType, int64(len(body)))
 	if err != nil {
@@ -80,6 +85,9 @@ func TestPresignRoundTrip(t *testing.T) {
 
 	if status := put(t, upload.URL, contentType, body); status != http.StatusOK {
 		t.Fatalf("PUT status = %d, want 200", status)
+	}
+	if status := put(t, upload.URL, contentType, body); status != http.StatusPreconditionFailed {
+		t.Errorf("second PUT to the same URL = %d, want 412: an uploaded object must not be replaceable", status)
 	}
 
 	download, err := store.PresignGet(ctx, key)
@@ -158,5 +166,100 @@ func TestPresignRejectsAnEmptyKey(t *testing.T) {
 		t.Error("PresignGet accepted an empty key")
 	} else if !strings.Contains(err.Error(), "presign get") {
 		t.Errorf("error = %v, want it to name the operation", err)
+	}
+}
+
+func TestSizeReadPrefixAndDelete(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := t.Context()
+
+	key := "test/object-" + t.Name() + ".bin"
+	body := []byte("0123456789")
+	t.Cleanup(func() { _ = store.Delete(context.Background(), key) })
+	upload, err := store.PresignPut(ctx, key, "image/jpeg", int64(len(body)))
+	if err != nil {
+		t.Fatalf("PresignPut: %v", err)
+	}
+	if status := put(t, upload.URL, "image/jpeg", body); status != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200", status)
+	}
+
+	if size, err := store.Size(ctx, key); err != nil || size != int64(len(body)) {
+		t.Errorf("Size = %d, %v; want %d", size, err, len(body))
+	}
+	if head, err := store.ReadPrefix(ctx, key, 4); err != nil || string(head) != "0123" {
+		t.Errorf("ReadPrefix(4) = %q, %v; want the first four bytes only", head, err)
+	}
+	if all, err := store.ReadPrefix(ctx, key, 512); err != nil || !bytes.Equal(all, body) {
+		t.Errorf("ReadPrefix past the end = %q, %v; want the whole object", all, err)
+	}
+
+	if err := store.Delete(ctx, key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := store.Size(ctx, key); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Size after Delete: err = %v, want ErrNotFound", err)
+	}
+	if _, err := store.ReadPrefix(ctx, key, 4); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ReadPrefix after Delete: err = %v, want ErrNotFound", err)
+	}
+	if err := store.Delete(ctx, key); err != nil {
+		t.Errorf("deleting a missing key: err = %v, want none", err)
+	}
+}
+
+func TestFailuresOtherThanAMissingObjectAreNotErrNotFound(t *testing.T) {
+	store := newTestStorage(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, sizeErr := store.Size(ctx, "test/any")
+	_, readErr := store.ReadPrefix(ctx, "test/any", 4)
+	deleteErr := store.Delete(ctx, "test/any")
+	for name, err := range map[string]error{"Size": sizeErr, "ReadPrefix": readErr, "Delete": deleteErr} {
+		if err == nil || errors.Is(err, ErrNotFound) {
+			t.Errorf("%s on a cancelled context: err = %v, want an error that is not ErrNotFound", name, err)
+		}
+	}
+}
+
+func fakeBucket(t *testing.T, object http.HandlerFunc) *Storage {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/attendance" {
+			object(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := testConfig()
+	cfg.Endpoint = srv.URL
+	store, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return store
+}
+
+func TestReadPrefixReportsACutConnection(t *testing.T) {
+	store := fakeBucket(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "512")
+		_, _ = w.Write([]byte("short"))
+	})
+
+	if _, err := store.ReadPrefix(t.Context(), "test/any", 512); err == nil || !strings.Contains(err.Error(), "read") {
+		t.Errorf("err = %v, want the truncated body reported", err)
+	}
+}
+
+func TestNewReportsAnUnreachableBucket(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+
+	cfg := testConfig()
+	cfg.Endpoint = srv.URL
+	if _, err := New(cfg); err == nil || !strings.Contains(err.Error(), "reach bucket") {
+		t.Errorf("err = %v, want the missing bucket to stop startup", err)
 	}
 }

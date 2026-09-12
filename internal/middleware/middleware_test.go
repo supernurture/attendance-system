@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -301,5 +302,21 @@ func TestRequestIDFallsBackWhenGenerationFails(t *testing.T) {
 		t.Error("no request id was set despite the fallback")
 	} else if !validRequestID(got) {
 		t.Errorf("fallback request id %q is not a valid one", got)
+	}
+}
+
+func TestRequestContextUnwrapsTheGinContext(t *testing.T) {
+	type key struct{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), key{}, "from the request"))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = req
+
+	if got := RequestContext(c); got != req.Context() {
+		t.Errorf("RequestContext(*gin.Context) = %v, want the request's own context", got)
+	}
+	plain := context.Background()
+	if got := RequestContext(plain); got != plain {
+		t.Errorf("RequestContext(plain) = %v, want it returned as is", got)
 	}
 }
