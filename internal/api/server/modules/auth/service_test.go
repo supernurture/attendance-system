@@ -257,3 +257,20 @@ func TestRedisFailuresSurface(t *testing.T) {
 		t.Errorf("DEL failing: err = %v, want the reset to fail the login", err)
 	}
 }
+
+func TestDeletedUserLosesAccess(t *testing.T) {
+	s := newServer(t)
+	user := s.createUser(t, true)
+	pair := s.signIn(t, user.Email, "192.0.2.1")
+
+	// What the user module's delete does: the row stays, deleted_at is set.
+	s.db.Exec("UPDATE users SET deleted_at = now() WHERE id = ?", user.ID)
+
+	if _, err := s.svc.Refresh(t.Context(), pair.RefreshToken); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("refresh for a deleted account: err = %v, want ErrInvalidToken", err)
+	}
+	_, err := s.svc.Login(t.Context(), user.Email, password, "198.51.100.9")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("login for a deleted account: err = %v, want ErrInvalidCredentials", err)
+	}
+}
