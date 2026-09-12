@@ -1,0 +1,129 @@
+openapi: 3.0.3
+info:
+  title: Auth API
+  description: Login, token refresh, and logout. Public; the refresh token is the credential.
+  version: 1.0.0
+tags:
+  - name: auth
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      tags:
+        - auth
+      summary: Log in
+      description: Exchanges email and password for an access token and a refresh token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: Wrong email or password, or the account is inactive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many failed attempts; try again later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/refresh:
+    post:
+      operationId: refresh
+      tags:
+        - auth
+      summary: Refresh tokens
+      description: Trades a refresh token for a new pair. The old refresh token stops working.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: A new token pair.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: The refresh token is unknown, expired, or revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/logout:
+    post:
+      operationId: logout
+      tags:
+        - auth
+      summary: Log out
+      description: Revokes the refresh token. Succeeds even if it was already revoked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: Logged out.
+components:
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          example: admin@example.com
+        password:
+          type: string
+          format: password
+    RefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+    TokenPair:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Seconds until the access token expires.
+          example: 900
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
