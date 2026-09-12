@@ -2,11 +2,15 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
@@ -67,21 +71,28 @@ func New(cfg Config) (*Storage, error) {
 type PresignedURL struct {
 	URL       string
 	ExpiresAt time.Time
+	Headers   map[string]string // the client must send all of them, exactly
 }
 
-// PresignPut signs a direct client upload. size is signed too, which is what caps it.
+// PresignPut signs a direct client upload. size is signed too, which is what caps it, and the URL
+// writes once, so a verified object cannot be replaced through it.
 func (s *Storage) PresignPut(ctx context.Context, key, contentType string, size int64) (PresignedURL, error) {
 	req, err := s.presign.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
 		ContentType:   aws.String(contentType),
 		ContentLength: aws.Int64(size),
+		IfNoneMatch:   aws.String("*"),
 	}, s3.WithPresignExpires(s.ttl))
 	if err != nil {
 		return PresignedURL{}, fmt.Errorf("presign put %q: %w", key, err)
 	}
 
-	return PresignedURL{URL: req.URL, ExpiresAt: time.Now().Add(s.ttl)}, nil
+	return PresignedURL{
+		URL:       req.URL,
+		ExpiresAt: time.Now().Add(s.ttl),
+		Headers:   map[string]string{"Content-Type": contentType, "If-None-Match": "*"},
+	}, nil
 }
 
 // PresignGet signs a direct client download. Anyone holding the URL can read it until it expires.
@@ -95,4 +106,51 @@ func (s *Storage) PresignGet(ctx context.Context, key string) (PresignedURL, err
 	}
 
 	return PresignedURL{URL: req.URL, ExpiresAt: time.Now().Add(s.ttl)}, nil
+}
+
+// ErrNotFound means the key holds no object.
+var ErrNotFound = errors.New("object not found")
+
+// Size returns the object's length in bytes, read from its headers; ErrNotFound if the key holds nothing.
+func (s *Storage) Size(ctx context.Context, key string) (int64, error) {
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		return 0, wrap("head", key, err)
+	}
+	return aws.ToInt64(out.ContentLength), nil
+}
+
+// ReadPrefix returns up to the first n bytes, fetching only those.
+func (s *Storage) ReadPrefix(ctx context.Context, key string, n int) ([]byte, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(fmt.Sprintf("bytes=0-%d", n-1)),
+	})
+	if err != nil {
+		return nil, wrap("get", key, err)
+	}
+	defer func() { _ = out.Body.Close() }()
+
+	head, err := io.ReadAll(io.LimitReader(out.Body, int64(n)))
+	if err != nil {
+		return nil, wrap("read", key, err)
+	}
+	return head, nil
+}
+
+// Delete is not an error for a missing key.
+func (s *Storage) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		return wrap("delete", key, err)
+	}
+	return nil
+}
+
+func wrap(op, key string, err error) error {
+	if resp, ok := errors.AsType[*awshttp.ResponseError](err); ok && resp.HTTPStatusCode() == http.StatusNotFound {
+		err = ErrNotFound
+	}
+	return fmt.Errorf("%s %q: %w", op, key, err)
 }
