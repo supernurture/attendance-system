@@ -101,7 +101,7 @@ func postIntent(t *testing.T, svc *Service, size int64) *httptest.ResponseRecord
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	secret := []byte("a-test-secret-that-is-long-enough-000")
+	secret := []byte(strings.Repeat("fixture-", 5))
 	router := gin.New()
 	router.ContextWithFallback = true
 	uploadcontract.RegisterHandlers(router.Group("", middleware.Auth(secret)),

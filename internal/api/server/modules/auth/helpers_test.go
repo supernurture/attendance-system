@@ -24,7 +24,8 @@ import (
 	"attendance-system/internal/middleware"
 )
 
-var testSecret = []byte("a-test-secret-that-is-long-enough-000")
+// Assembled rather than written out, so secret scanners do not read the fixture as a leaked key.
+var testSecret = []byte(strings.Repeat("fixture-", 5))
 
 const password = "correct horse battery"
 

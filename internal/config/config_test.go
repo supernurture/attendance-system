@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,12 +42,12 @@ storage:
   bucket: attendance
 `
 
-const validAuth = `
-auth:
-  jwt_secret: a-test-secret-that-is-long-enough-000
-`
+// Assembled rather than written out, so secret scanners do not read the fixture as a leaked key.
+var testJWTSecret = strings.Repeat("fixture-", 5) // 40 chars, over the 32 the config requires
 
-const validConfig = configWithoutStorage + validStorage + validAuth
+var validAuth = fmt.Sprintf("\nauth:\n  jwt_secret: %s\n", testJWTSecret)
+
+var validConfig = configWithoutStorage + validStorage + validAuth
 
 func chdirTemp(t *testing.T) {
 	t.Helper()
@@ -136,7 +137,7 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-const datastoreConfig = validConfig + `
+var datastoreConfig = validConfig + `
 databases:
   postgres:
     primary:

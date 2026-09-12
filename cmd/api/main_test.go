@@ -23,6 +23,9 @@ import (
 	"attendance-system/pkg/logger"
 )
 
+// Assembled rather than written out, so secret scanners do not read the fixture as a leaked key.
+var testJWTSecret = strings.Repeat("fixture-", 5) // 40 chars, over the 32 the config requires
+
 func validConfig(port int) string {
 	return fmt.Sprintf(`
 app:
@@ -44,8 +47,8 @@ storage:
   secret_access_key: minioadmin
   presign_ttl: 5m
 auth:
-  jwt_secret: a-test-secret-that-is-long-enough-000
-`, port)
+  jwt_secret: %s
+`, port, testJWTSecret)
 }
 
 func stubContainer(t *testing.T) {

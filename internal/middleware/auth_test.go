@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,7 +11,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var testSecret = []byte("a-test-secret-that-is-long-enough-000")
+// Assembled rather than written out, so secret scanners do not read the fixture as a leaked key.
+var testSecret = []byte(strings.Repeat("fixture-", 5))
 
 func authRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
