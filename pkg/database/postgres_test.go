@@ -72,7 +72,16 @@ func TestPostgresDSNQuotesEveryValue(t *testing.T) {
 	if want := `password='x sslmode=disable'`; !strings.Contains(dsn, want) {
 		t.Errorf("dsn = %s, want it to contain %s", dsn, want)
 	}
-	if !strings.HasSuffix(dsn, "sslmode=require") {
+	if !strings.Contains(dsn, "sslmode=require") {
 		t.Errorf("dsn = %s, want opts appended verbatim", dsn)
+	}
+}
+
+// The zone must be last, or an opts that sets its own would win and date columns would shift a day.
+func TestPostgresDSNPinsUTCLast(t *testing.T) {
+	dsn := PostgresDSN("db.internal", 5432, "app", "secret", "attendance", "TimeZone=America/New_York")
+
+	if !strings.HasSuffix(dsn, "TimeZone=UTC") {
+		t.Errorf("dsn = %s, want it to end with TimeZone=UTC", dsn)
 	}
 }
