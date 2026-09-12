@@ -1,0 +1,443 @@
+openapi: 3.0.3
+info:
+  title: User API
+  description: |
+    Employees, the manager hierarchy, and departments. Who may see whom follows the hierarchy:
+    a supervisor reaches their own subtree, hr_admin and super_admin reach everyone.
+  version: 1.0.0
+tags:
+  - name: user
+  - name: department
+security:
+  - bearerAuth: []
+paths:
+  /me:
+    get:
+      operationId: getMe
+      tags:
+        - user
+      summary: Get the caller
+      responses:
+        '200':
+          description: The caller's own record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /users:
+    get:
+      operationId: listUsers
+      tags:
+        - user
+      summary: List employees in reach
+      description: A supervisor sees their own subtree; hr_admin and super_admin see everyone.
+      responses:
+        '200':
+          description: Employees the caller may see, by full name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createUser
+      tags:
+        - user
+      summary: Add an employee
+      description: hr_admin only. The role is granted separately, so a new employee starts as one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: getUser
+      tags:
+        - user
+      summary: Get one employee
+      description: Themselves, someone in their subtree, or anyone for hr_admin and super_admin.
+      responses:
+        '200':
+          description: The employee.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateUser
+      tags:
+        - user
+      summary: Replace an employee's details
+      description: |
+        hr_admin only, and every field is replaced: send the current value for anything you are not
+        changing. department_id and manager_id accept null to clear them. The role has its own endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteUser
+      tags:
+        - user
+      summary: Remove an employee
+      description: |
+        hr_admin only. The row is kept with deleted_at set, so reports can still join their
+        attendance; the account stops working at once.
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /users/{id}/role:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      operationId: updateUserRole
+      tags:
+        - user
+      summary: Grant a role
+      description: super_admin only, and written to audit_logs. hr_admin cannot grant roles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+      responses:
+        '200':
+          description: Granted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /departments:
+    get:
+      operationId: listDepartments
+      tags:
+        - department
+      summary: List departments
+      description: supervisor and above; a department is only a label for grouping reports.
+      responses:
+        '200':
+          description: Departments by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Department'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createDepartment
+      tags:
+        - department
+      summary: Add a department
+      description: hr_admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentRequest'
+      responses:
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /departments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      operationId: updateDepartment
+      tags:
+        - department
+      summary: Rename a department
+      description: hr_admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentRequest'
+      responses:
+        '200':
+          description: Renamed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteDepartment
+      tags:
+        - department
+      summary: Remove a department
+      description: hr_admin only. Employees keep pointing at it, so old reports still group.
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: The request breaks a rule; the message says which.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid access token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller's role or hierarchy does not reach this.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such record.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The email or name is taken.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    User:
+      type: object
+      required:
+        - id
+        - email
+        - full_name
+        - role
+        - is_active
+        - join_date
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+        full_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        is_active:
+          type: boolean
+        join_date:
+          type: string
+          format: date
+        department_id:
+          type: integer
+          format: int64
+          nullable: true
+        manager_id:
+          type: integer
+          format: int64
+          nullable: true
+    Role:
+      type: string
+      enum:
+        - employee
+        - supervisor
+        - hr_admin
+        - super_admin
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - password
+        - full_name
+      properties:
+        email:
+          type: string
+          example: budi@example.com
+        password:
+          type: string
+          format: password
+        full_name:
+          type: string
+        join_date:
+          type: string
+          format: date
+          description: Defaults to today.
+        department_id:
+          type: integer
+          format: int64
+          nullable: true
+        manager_id:
+          type: integer
+          format: int64
+          nullable: true
+    UpdateUserRequest:
+      type: object
+      required:
+        - full_name
+        - is_active
+        - join_date
+      properties:
+        full_name:
+          type: string
+        is_active:
+          type: boolean
+        join_date:
+          type: string
+          format: date
+        department_id:
+          type: integer
+          format: int64
+          nullable: true
+        manager_id:
+          type: integer
+          format: int64
+          nullable: true
+    UpdateRoleRequest:
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          $ref: '#/components/schemas/Role'
+    Department:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    DepartmentRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: Engineering
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
