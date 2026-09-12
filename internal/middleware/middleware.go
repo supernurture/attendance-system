@@ -71,6 +71,14 @@ func RequestIDFrom(ctx context.Context) string {
 	return reqID
 }
 
+// RequestContext returns the request's context; gin recycles *gin.Context, so never pass that downstream.
+func RequestContext(ctx context.Context) context.Context {
+	if c, ok := ctx.(*gin.Context); ok {
+		return c.Request.Context()
+	}
+	return ctx
+}
+
 // AccessLog logs one line per request: 5xx as error, 4xx as warn, rest as info.
 func AccessLog(log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
