@@ -19,7 +19,15 @@ type Config struct {
 	Databases Databases        `mapstructure:"databases"`
 	Redis     map[string]Redis `mapstructure:"redis"   validate:"omitempty,dive"`
 	Storage   Storage          `mapstructure:"storage"`
+	Auth      Auth             `mapstructure:"auth"`
 	Logger    Logger           `mapstructure:"logger"`
+}
+
+// Auth holds the JWT signing secret and the optional super_admin created at startup.
+type Auth struct {
+	JWTSecret         string `mapstructure:"jwt_secret"          validate:"required,min=32"`
+	SeedAdminEmail    string `mapstructure:"seed_admin_email"`
+	SeedAdminPassword string `mapstructure:"seed_admin_password"`
 }
 
 // App holds application identity and environment.
@@ -78,7 +86,7 @@ type Storage struct {
 	AccessKeyID     string        `mapstructure:"access_key_id"     validate:"required"`
 	SecretAccessKey string        `mapstructure:"secret_access_key" validate:"required"`
 	ForcePathStyle  bool          `mapstructure:"force_path_style"`
-	PresignTTL      time.Duration `mapstructure:"presign_ttl"       validate:"required,gt=0"`
+	PresignTTL      time.Duration `mapstructure:"presign_ttl"       validate:"required,gt=0,lte=168h"`
 }
 
 // Logger holds log output, level, and rotation settings.
@@ -97,6 +105,8 @@ const (
 	configName = "config"
 	configType = "yaml"
 	configPath = "configs/"
+
+	devPrefix = "dev-only-"
 )
 
 // Load reads configs/config.yaml, overlays .env and the environment, and validates the result before returning it.
@@ -127,6 +137,9 @@ func Load() (*Config, error) {
 
 	if err := validator.New().Struct(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	if cfg.App.Env != "development" && strings.HasPrefix(cfg.Auth.JWTSecret, devPrefix) {
+		return nil, errors.New("invalid config: auth.jwt_secret is the example value; set AUTH_JWT_SECRET")
 	}
 
 	return &cfg, nil

@@ -41,7 +41,12 @@ storage:
   bucket: attendance
 `
 
-const validConfig = configWithoutStorage + validStorage
+const validAuth = `
+auth:
+  jwt_secret: a-test-secret-that-is-long-enough-000
+`
+
+const validConfig = configWithoutStorage + validStorage + validAuth
 
 func chdirTemp(t *testing.T) {
 	t.Helper()
@@ -226,13 +231,35 @@ func TestLoadErrors(t *testing.T) {
 		},
 		{
 			name:  "storage block present but incomplete",
-			files: map[string]string{configFile(): configWithoutStorage + incompleteStorage},
+			files: map[string]string{configFile(): configWithoutStorage + incompleteStorage + validAuth},
 			want:  "Endpoint",
 		},
 		{
 			name:  "storage block missing entirely",
-			files: map[string]string{configFile(): configWithoutStorage},
+			files: map[string]string{configFile(): configWithoutStorage + validAuth},
 			want:  "Storage",
+		},
+		{
+			name: "presign ttl past the week SigV4 allows",
+			files: map[string]string{
+				configFile(): configWithoutStorage + validAuth + strings.Replace(validStorage, "5m", "169h", 1),
+			},
+			want: "PresignTTL",
+		},
+		{
+			name: "jwt secret short enough to brute force",
+			files: map[string]string{
+				configFile(): configWithoutStorage + validStorage + "auth:\n  jwt_secret: short\n",
+			},
+			want: "JWTSecret",
+		},
+		{
+			name: "example jwt secret in staging",
+			files: map[string]string{
+				configFile(): strings.Replace(configWithoutStorage, "development", "staging", 1) +
+					validStorage + "auth:\n  jwt_secret: dev-only-secret-override-AUTH_JWT_SECRET\n",
+			},
+			want: "AUTH_JWT_SECRET",
 		},
 	}
 

@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 
 	"attendance-system/internal/config"
 	"attendance-system/internal/container"
@@ -40,6 +43,8 @@ storage:
   access_key_id: minioadmin
   secret_access_key: minioadmin
   presign_ttl: 5m
+auth:
+  jwt_secret: a-test-secret-that-is-long-enough-000
 `, port)
 }
 
@@ -52,8 +57,16 @@ func stubContainer(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = log.Close() })
 
+	db, err := gorm.Open(postgres.Open("host=127.0.0.1 port=1"), &gorm.Config{DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatalf("gorm.Open: %v", err)
+	}
 	swap(t, &newContainer, func(*config.Config) (*container.Container, error) {
-		return &container.Container{Logger: log}, nil
+		return &container.Container{
+			Logger:   log,
+			Postgres: map[string]*gorm.DB{"primary": db},
+			Redis:    map[string]*goredis.Client{"cache": goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"})},
+		}, nil
 	})
 }
 

@@ -47,6 +47,12 @@ storage:
   force_path_style: true # required by MinIO, harmless on R2
   presign_ttl: 5m
 
+auth:
+  jwt_secret: dev-only-secret-override-AUTH_JWT_SECRET # min 32 chars; refused outside development
+  # super_admin created at startup if the email is free; set both in .env
+  seed_admin_email:
+  seed_admin_password:
+
 logger:
   path: ./logs
   level: INFO # DEBUG, INFO, WARN, or ERROR

@@ -44,6 +44,8 @@ storage:
   access_key_id: minioadmin
   secret_access_key: minioadmin
   presign_ttl: 5m
+auth:
+  jwt_secret: a-test-secret-that-is-long-enough-000
 databases:
   postgres:
     %s:
