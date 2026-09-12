@@ -40,15 +40,26 @@ func (h *Handler) GetMe(
 }
 
 func (h *Handler) ListUsers(
-	ctx context.Context, _ usercontract.ListUsersRequestObject,
+	ctx context.Context, req usercontract.ListUsersRequestObject,
 ) (usercontract.ListUsersResponseObject, error) {
 	ctx, claims, err := caller(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	users, err := h.svc.List(ctx, claims)
-	if status(err) == http.StatusForbidden {
+	page := Page{Limit: defaultPageLimit} // an absent limit means the default; an explicit 0 does not
+	if req.Params.Limit != nil {
+		page.Limit = *req.Params.Limit
+	}
+	if req.Params.Offset != nil {
+		page.Offset = *req.Params.Offset
+	}
+
+	users, err := h.svc.List(ctx, claims, page)
+	switch status(err) {
+	case http.StatusBadRequest:
+		return usercontract.ListUsers400JSONResponse{BadRequestJSONResponse: badRequest(err)}, nil
+	case http.StatusForbidden:
 		return usercontract.ListUsers403JSONResponse{ForbiddenJSONResponse: forbidden(err)}, nil
 	}
 	if err != nil {
@@ -156,7 +167,9 @@ func (h *Handler) DeleteUser(
 
 	err = h.svc.Delete(ctx, claims, req.Id)
 	switch status(err) {
-	case http.StatusBadRequest, http.StatusForbidden:
+	case http.StatusBadRequest:
+		return usercontract.DeleteUser400JSONResponse{BadRequestJSONResponse: badRequest(err)}, nil
+	case http.StatusForbidden:
 		return usercontract.DeleteUser403JSONResponse{ForbiddenJSONResponse: forbidden(err)}, nil
 	case http.StatusNotFound:
 		return usercontract.DeleteUser404JSONResponse{NotFoundJSONResponse: notFound(err)}, nil

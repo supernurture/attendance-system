@@ -1,6 +1,7 @@
 package user
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,7 +96,7 @@ func (s *server) addUser(t *testing.T, role middleware.Role, managerID *int64) U
 	t.Helper()
 
 	user := User{
-		Email:        fmt.Sprintf("user-%d@test.local", time.Now().UnixNano()),
+		Email:        unique("user") + "@test.local",
 		PasswordHash: "not used: tests sign their own tokens",
 		FullName:     fmt.Sprintf("User %d", len(s.userIDs)+1),
 		Role:         string(role),
@@ -237,4 +238,47 @@ func (s *server) doOn(
 	s.router = router
 	defer func() { s.router = original }()
 	return s.do(t, method, path, as, body)
+}
+
+// auditLogs reads what the module wrote; nothing in production reads audit_logs yet.
+func (s *server) auditLogs(t *testing.T, entityID int64) []AuditLog {
+	t.Helper()
+
+	var logs []AuditLog
+	err := s.db.Where("entity_type = ? AND entity_id = ?", entityUser, entityID).Order("id").Find(&logs).Error
+	if err != nil {
+		t.Fatalf("read audit_logs: %v", err)
+	}
+	return logs
+}
+
+// failingAfterDB fails the statements whose SQL contains match, hooked after the SQL is built so a
+// single query can be singled out. Matching before it runs only sees the table name.
+func failingAfterDB(t *testing.T, match string) *gorm.DB {
+	t.Helper()
+
+	db := testDB(t)
+	fail := func(tx *gorm.DB) {
+		if strings.Contains(tx.Statement.SQL.String(), match) {
+			_ = tx.AddError(errInjected)
+		}
+	}
+	callbacks := db.Callback()
+	for _, err := range []error{
+		callbacks.Query().After("gorm:query").Register("test:fail-after", fail),
+		callbacks.Update().After("gorm:update").Register("test:fail-after", fail),
+		callbacks.Delete().After("gorm:delete").Register("test:fail-after", fail),
+	} {
+		if err != nil {
+			t.Fatalf("register failure callback: %v", err)
+		}
+	}
+	return db
+}
+
+// unique builds a value no other test or package will repeat. time.Now().UnixNano() is not enough:
+// the Windows clock is coarse, so two packages running at once produced the same email and collided
+// on the unique index.
+func unique(prefix string) string {
+	return prefix + "-" + strings.ToLower(rand.Text()) // rand.Text: 26 random base32 characters
 }

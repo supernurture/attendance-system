@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
@@ -97,7 +97,7 @@ func (s *server) createUser(t *testing.T, active bool) User {
 		t.Fatalf("hash: %v", err)
 	}
 	user := User{
-		Email:        fmt.Sprintf("user-%d@test.local", time.Now().UnixNano()),
+		Email:        unique("user") + "@test.local",
 		PasswordHash: string(hash),
 		FullName:     "Test User",
 		Role:         "employee",
@@ -224,4 +224,11 @@ func (failDel) ProcessHook(next goredis.ProcessHook) goredis.ProcessHook {
 
 func (failDel) ProcessPipelineHook(next goredis.ProcessPipelineHook) goredis.ProcessPipelineHook {
 	return next
+}
+
+// unique builds a value no other test or package will repeat. time.Now().UnixNano() is not enough:
+// the Windows clock is coarse, so two packages running at once produced the same email and collided
+// on the unique index.
+func unique(prefix string) string {
+	return prefix + "-" + strings.ToLower(rand.Text()) // rand.Text: 26 random base32 characters
 }

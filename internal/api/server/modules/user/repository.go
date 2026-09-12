@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // User is an employee. DeletedAt makes every query here skip the removed ones, and it is why
@@ -60,6 +61,13 @@ func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
+// Exists reports whether a live user has that id; the foreign key alone would accept a removed one.
+func (r *Repository) Exists(ctx context.Context, id int64) (bool, error) {
+	var found int64
+	err := r.db.WithContext(ctx).Model(&User{}).Where("id = ?", id).Count(&found).Error
+	return found > 0, err
+}
+
 // ByID fails with ErrNotFound when no live user has that id.
 func (r *Repository) ByID(ctx context.Context, id int64) (User, error) {
 	var user User
@@ -70,10 +78,16 @@ func (r *Repository) ByID(ctx context.Context, id int64) (User, error) {
 	return user, err
 }
 
-func (r *Repository) List(ctx context.Context) ([]User, error) {
+func (r *Repository) List(ctx context.Context, page Page) ([]User, error) {
 	var users []User
-	return users, r.db.WithContext(ctx).Order("full_name").Find(&users).Error
+	err := r.db.WithContext(ctx).Order(listOrder).
+		Limit(page.Limit).Offset(page.Offset).Find(&users).Error
+	return users, err
 }
+
+// listOrder breaks ties by id: ordering by name alone lets paging repeat one namesake and skip another,
+// because Postgres may return equal names in any order.
+const listOrder = "full_name, id"
 
 // subtree walks manager_id down from managerID. The CYCLE clause is what keeps circular manager
 // data from looping forever; without it the query never returns.
@@ -85,11 +99,11 @@ const subtree = `WITH RECURSIVE subordinates AS (
 SELECT id FROM subordinates`
 
 // ListSubtree returns everyone below managerID in the hierarchy, however deep.
-func (r *Repository) ListSubtree(ctx context.Context, managerID int64) ([]User, error) {
+func (r *Repository) ListSubtree(ctx context.Context, managerID int64, page Page) ([]User, error) {
 	var users []User
 	err := r.db.WithContext(ctx).
 		Where("id IN (?)", r.db.Raw(subtree, managerID)).
-		Order("full_name").Find(&users).Error
+		Order(listOrder).Limit(page.Limit).Offset(page.Offset).Find(&users).Error
 	return users, err
 }
 
@@ -152,16 +166,38 @@ func (r *Repository) ChangeRole(ctx context.Context, userID int64, role string, 
 	return r.ByID(ctx, userID)
 }
 
-// SoftDelete sets deleted_at, keeping the row so reports can still join what the user did.
-func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
-	result := r.db.WithContext(ctx).Delete(&User{}, id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+// SoftDelete sets deleted_at, keeping the row so reports can still join what the user did, and moves
+// anyone who reported to them up to their manager. Without that the subtree query stops at the
+// removed row and the whole branch below it drops out of the hierarchy.
+func (r *Repository) SoftDelete(ctx context.Context, id int64, audit *AuditLog) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Locked, so two deletes at once cannot both reparent and both write an audit row.
+		var leaver User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Take(&leaver, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+
+		reparent := tx.Model(&User{}).Where("manager_id = ?", id).
+			Updates(map[string]any{"manager_id": leaver.ManagerID, "updated_at": time.Now()})
+		if reparent.Error != nil {
+			return reparent.Error
+		}
+		if err := tx.Delete(&User{}, id).Error; err != nil {
+			return err
+		}
+		return writeAudit(tx, audit)
+	})
+}
+
+// DepartmentExists reports whether a live department has that id; the foreign key alone would accept
+// a removed one, since it cannot see deleted_at.
+func (r *Repository) DepartmentExists(ctx context.Context, id int64) (bool, error) {
+	var found int64
+	err := r.db.WithContext(ctx).Model(&Department{}).Where("id = ?", id).Count(&found).Error
+	return found > 0, err
 }
 
 func (r *Repository) ListDepartments(ctx context.Context) ([]Department, error) {
@@ -196,14 +232,6 @@ func (r *Repository) DeleteDepartment(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
-}
-
-func (r *Repository) auditLogs(ctx context.Context, entityType string, entityID int64) ([]AuditLog, error) {
-	var logs []AuditLog
-	err := r.db.WithContext(ctx).
-		Where("entity_type = ? AND entity_id = ?", entityType, entityID).
-		Order("id").Find(&logs).Error
-	return logs, err
 }
 
 func writeAudit(tx *gorm.DB, audit *AuditLog) error {

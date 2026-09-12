@@ -3,7 +3,6 @@ package user
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -35,7 +34,7 @@ func TestListSubtreeWalksEveryLevel(t *testing.T) {
 	s := newServer(t)
 	lead, mid, junior, stranger := s.hierarchy(t)
 
-	below, err := s.repo.ListSubtree(t.Context(), lead.ID)
+	below, err := s.repo.ListSubtree(t.Context(), lead.ID, Page{Limit: 100})
 	if err != nil {
 		t.Fatalf("ListSubtree: %v", err)
 	}
@@ -51,7 +50,7 @@ func TestListSubtreeWalksEveryLevel(t *testing.T) {
 		}
 	}
 
-	oneDown, err := s.repo.ListSubtree(t.Context(), mid.ID)
+	oneDown, err := s.repo.ListSubtree(t.Context(), mid.ID, Page{Limit: 100})
 	if err != nil {
 		t.Fatalf("ListSubtree: %v", err)
 	}
@@ -91,7 +90,7 @@ func TestSubtreeSurvivesCircularManagers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	below, err := s.repo.ListSubtree(ctx, first.ID)
+	below, err := s.repo.ListSubtree(ctx, first.ID, Page{Limit: 100})
 	if err != nil {
 		t.Fatalf("ListSubtree on circular data: %v", err)
 	}
@@ -109,7 +108,7 @@ func TestCreateRejectsATakenEmailButReusesADeletedOne(t *testing.T) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
 
-	if err := s.repo.SoftDelete(t.Context(), taken.ID); err != nil {
+	if err := s.repo.SoftDelete(t.Context(), taken.ID, nil); err != nil {
 		t.Fatalf("SoftDelete: %v", err)
 	}
 	if err := s.repo.Create(t.Context(), again); err != nil {
@@ -123,7 +122,7 @@ func TestCreateReportsAnUnknownManagerOrDepartment(t *testing.T) {
 	missing := int64(0)
 
 	err := s.repo.Create(t.Context(), &User{
-		Email: fmt.Sprintf("fk-%d@test.local", time.Now().UnixNano()), PasswordHash: "x",
+		Email: unique("fk") + "@test.local", PasswordHash: "x",
 		FullName: "No Manager", Role: "employee", JoinDate: time.Now(), ManagerID: &missing,
 	})
 	if !isValidationError(err) {
@@ -143,7 +142,7 @@ func TestSoftDeleteKeepsTheRowForReports(t *testing.T) {
 		t.Fatalf("create audit row: %v", err)
 	}
 
-	if err := s.repo.SoftDelete(t.Context(), leaver.ID); err != nil {
+	if err := s.repo.SoftDelete(t.Context(), leaver.ID, nil); err != nil {
 		t.Fatalf("SoftDelete: %v", err)
 	}
 
@@ -167,7 +166,7 @@ func TestSoftDeleteKeepsTheRowForReports(t *testing.T) {
 func TestSoftDeleteReportsAMiss(t *testing.T) {
 	s := newServer(t)
 
-	if err := s.repo.SoftDelete(t.Context(), 0); !errors.Is(err, ErrNotFound) {
+	if err := s.repo.SoftDelete(t.Context(), 0, nil); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -195,7 +194,7 @@ func TestReplaceAndChangeRoleReportAMiss(t *testing.T) {
 
 func TestDepartments(t *testing.T) {
 	s := newServer(t)
-	name := fmt.Sprintf("Engineering %d", time.Now().UnixNano())
+	name := unique("Engineering")
 
 	department := Department{Name: name}
 	if err := s.repo.CreateDepartment(t.Context(), &department); err != nil {
@@ -235,7 +234,7 @@ func TestTranslateLeavesOtherFailuresAlone(t *testing.T) {
 
 	// A CHECK violation is neither a taken email nor a missing reference: it stays a 500.
 	err := s.repo.Create(t.Context(), &User{
-		Email: fmt.Sprintf("role-%d@test.local", time.Now().UnixNano()), PasswordHash: "x",
+		Email: unique("role") + "@test.local", PasswordHash: "x",
 		FullName: "Bad Role", Role: "owner", JoinDate: time.Now(),
 	})
 	if err == nil || errors.Is(err, ErrConflict) || isValidationError(err) {
@@ -246,12 +245,12 @@ func TestTranslateLeavesOtherFailuresAlone(t *testing.T) {
 func TestRepositoryReportsDatabaseFailures(t *testing.T) {
 	s := newServer(t)
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
-	department := s.addDepartment(t, fmt.Sprintf("Fault %d", time.Now().UnixNano()))
+	department := s.addDepartment(t, unique("Fault"))
 	users := NewRepository(failingDB(t, "users"))
 	departments := NewRepository(failingDB(t, "departments"))
 
 	calls := map[string]func() error{
-		"SoftDelete": func() error { return users.SoftDelete(t.Context(), employee.ID) },
+		"SoftDelete": func() error { return users.SoftDelete(t.Context(), employee.ID, nil) },
 		"ChangeRole": func() error {
 			_, err := users.ChangeRole(t.Context(), employee.ID, "supervisor", AuditLog{})
 			return err
@@ -272,5 +271,86 @@ func TestRepositoryReportsDatabaseFailures(t *testing.T) {
 				t.Errorf("err = %v, want the injected failure", err)
 			}
 		})
+	}
+}
+
+func TestSoftDeleteMovesTheReportsUp(t *testing.T) {
+	s := newServer(t)
+	lead, mid, junior, _ := s.hierarchy(t)
+
+	if err := s.repo.SoftDelete(t.Context(), mid.ID, nil); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	moved, err := s.repo.ByID(t.Context(), junior.ID)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if moved.ManagerID == nil || *moved.ManagerID != lead.ID {
+		t.Errorf("junior's manager = %v, want the removed manager's own manager (%d)", moved.ManagerID, lead.ID)
+	}
+	below, err := s.repo.ListSubtree(t.Context(), lead.ID, Page{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListSubtree: %v", err)
+	}
+	if got := ids(below); !slices.Contains(got, junior.ID) {
+		t.Errorf("lead's subtree = %v, want it to still reach %d", got, junior.ID)
+	}
+
+	// Removing a root leaves its reports without a manager, which only hr_admin can then see.
+	if err := s.repo.SoftDelete(t.Context(), lead.ID, nil); err != nil {
+		t.Fatalf("SoftDelete the root: %v", err)
+	}
+	orphan, err := s.repo.ByID(t.Context(), junior.ID)
+	if err != nil || orphan.ManagerID != nil {
+		t.Errorf("junior's manager = %v, %v; want none", orphan.ManagerID, err)
+	}
+}
+
+func TestSoftDeleteReportsAFailedReparent(t *testing.T) {
+	s := newServer(t)
+	_, mid, _, _ := s.hierarchy(t)
+	repo := NewRepository(failingAfterDB(t, "manager_id"))
+
+	if err := repo.SoftDelete(t.Context(), mid.ID, nil); !errors.Is(err, errInjected) {
+		t.Errorf("err = %v, want the failed reparent reported, not a half-done delete", err)
+	}
+	if _, err := s.repo.ByID(t.Context(), mid.ID); err != nil {
+		t.Errorf("the user was removed anyway: %v", err)
+	}
+}
+
+func TestSoftDeleteReportsAFailedDelete(t *testing.T) {
+	s := newServer(t)
+	employee := s.addUser(t, middleware.RoleEmployee, nil)
+	repo := NewRepository(failingAfterDB(t, `SET "deleted_at"`))
+
+	if err := repo.SoftDelete(t.Context(), employee.ID, nil); !errors.Is(err, errInjected) {
+		t.Errorf("err = %v, want the failed delete reported", err)
+	}
+}
+
+func TestPagingWalksNamesakesExactlyOnce(t *testing.T) {
+	s := newServer(t)
+	const namesakes = 4
+	for range namesakes {
+		user := s.addUser(t, middleware.RoleEmployee, nil)
+		s.db.Model(&User{}).Where("id = ?", user.ID).Update("full_name", "Budi")
+	}
+
+	seen := map[int64]int{}
+	for offset := range namesakes {
+		page, err := s.repo.List(t.Context(), Page{Limit: 1, Offset: offset})
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("offset %d returned %d rows, want 1", offset, len(page))
+		}
+		seen[page[0].ID]++
+	}
+	if len(seen) != namesakes {
+		t.Errorf("%d pages over %d rows named alike showed %d distinct users; paging repeats or skips",
+			namesakes, namesakes, len(seen))
 	}
 }

@@ -25,7 +25,7 @@ func TestGetMeAnswers200AndThen404(t *testing.T) {
 	}
 
 	// A token outlives the account by up to its 15 minutes, so the route has to answer something.
-	if err := s.repo.SoftDelete(t.Context(), employee.ID); err != nil {
+	if err := s.repo.SoftDelete(t.Context(), employee.ID, nil); err != nil {
 		t.Fatalf("SoftDelete: %v", err)
 	}
 	if rec := s.do(t, http.MethodGet, "/me", employee, nil); rec.Code != http.StatusNotFound {
@@ -64,7 +64,7 @@ func TestCreateUserAnswers201ThenConflictAndBadRequest(t *testing.T) {
 	s := newServer(t)
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 	body := usercontract.CreateUserRequest{
-		Email:    fmt.Sprintf("new-%d@test.local", time.Now().UnixNano()),
+		Email:    unique("new") + "@test.local",
 		Password: "eight888",
 		FullName: "Budi Santoso",
 	}
@@ -79,7 +79,7 @@ func TestCreateUserAnswers201ThenConflictAndBadRequest(t *testing.T) {
 		t.Errorf("the same email twice: status = %d, want 409", rec.Code)
 	}
 
-	body.Email = fmt.Sprintf("other-%d@test.local", time.Now().UnixNano())
+	body.Email = unique("other") + "@test.local"
 	body.Password = "short"
 	if rec := s.do(t, http.MethodPost, "/users", admin, body); rec.Code != http.StatusBadRequest {
 		t.Errorf("a short password: status = %d, want 400", rec.Code)
@@ -125,8 +125,8 @@ func TestUpdateAndDeleteUser(t *testing.T) {
 	}
 
 	own := fmt.Sprintf("/users/%d", admin.ID)
-	if rec := s.do(t, http.MethodDelete, own, admin, nil); rec.Code != http.StatusForbidden {
-		t.Errorf("an admin deleting themselves: status = %d, want 403", rec.Code)
+	if rec := s.do(t, http.MethodDelete, own, admin, nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("an admin deleting themselves: status = %d, want 400", rec.Code)
 	}
 	if rec := s.do(t, http.MethodDelete, path, admin, nil); rec.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", rec.Code)
@@ -165,7 +165,7 @@ func TestDepartmentEndpoints(t *testing.T) {
 	s := newServer(t)
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
-	body := usercontract.DepartmentRequest{Name: fmt.Sprintf("Engineering %d", time.Now().UnixNano())}
+	body := usercontract.DepartmentRequest{Name: unique("Engineering")}
 
 	if rec := s.do(t, http.MethodPost, "/departments", employee, body); rec.Code != http.StatusForbidden {
 		t.Errorf("an employee adding a department: status = %d, want 403", rec.Code)
@@ -256,8 +256,8 @@ func TestRoutesRefuseAnEmployeeAndABadBody(t *testing.T) {
 	s := newServer(t)
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
-	department := s.addDepartment(t, fmt.Sprintf("Finance %d", time.Now().UnixNano()))
-	other := s.addDepartment(t, fmt.Sprintf("Legal %d", time.Now().UnixNano()))
+	department := s.addDepartment(t, unique("Finance"))
+	other := s.addDepartment(t, unique("Legal"))
 	path := fmt.Sprintf("/departments/%d", department.ID)
 	date := types.Date{Time: time.Now()}
 
@@ -339,5 +339,48 @@ func TestHandlerRefusesAnUnguardedRoute(t *testing.T) {
 				t.Error("the handler answered without claims; want an error")
 			}
 		})
+	}
+}
+
+func TestListUsersTakesLimitAndOffset(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	s.addUser(t, middleware.RoleEmployee, nil)
+
+	page := decode[[]usercontract.User](t, s.do(t, http.MethodGet, "/users?limit=1", admin, nil), http.StatusOK)
+	if len(page) != 1 {
+		t.Errorf("limit=1 returned %d rows, want 1", len(page))
+	}
+	next := decode[[]usercontract.User](t,
+		s.do(t, http.MethodGet, "/users?limit=1&offset=1", admin, nil), http.StatusOK)
+	if len(next) != 1 || next[0].Id == page[0].Id {
+		t.Errorf("offset=1 returned %+v, want a different row", next)
+	}
+	if rec := s.do(t, http.MethodGet, "/users?limit=501", admin, nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("limit=501: status = %d, want 400", rec.Code)
+	}
+}
+
+func TestDeleteUserAnswers403ForAHigherRole(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	owner := s.addUser(t, middleware.RoleSuperAdmin, nil)
+
+	path := fmt.Sprintf("/users/%d", owner.ID)
+	if rec := s.do(t, http.MethodDelete, path, admin, nil); rec.Code != http.StatusForbidden {
+		t.Errorf("hr_admin deleting a super_admin: status = %d, want 403", rec.Code)
+	}
+}
+
+func TestListUsersRefusesAnExplicitZeroLimit(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+
+	// Absent means the default; sending zero is a mistake worth reporting.
+	if rec := s.do(t, http.MethodGet, "/users?limit=0", admin, nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("limit=0: status = %d, want 400", rec.Code)
+	}
+	if rec := s.do(t, http.MethodGet, "/users", admin, nil); rec.Code != http.StatusOK {
+		t.Errorf("no limit: status = %d, want 200", rec.Code)
 	}
 }

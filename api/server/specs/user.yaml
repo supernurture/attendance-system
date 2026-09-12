@@ -34,7 +34,20 @@ paths:
       tags:
         - user
       summary: List employees in reach
-      description: A supervisor sees their own subtree; hr_admin and super_admin see everyone.
+      description: |
+        A supervisor sees their own subtree; hr_admin and super_admin see everyone. Ordered by full
+        name, so paging with limit and offset is stable.
+      parameters:
+        - name: limit
+          in: query
+          description: Rows to return, 1 to 500. Defaults to 100.
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          description: Rows to skip. Defaults to 0.
+          schema:
+            type: integer
       responses:
         '200':
           description: Employees the caller may see, by full name.
@@ -44,6 +57,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -142,6 +157,8 @@ paths:
       responses:
         '204':
           description: Removed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

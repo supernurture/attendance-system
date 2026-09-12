@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
@@ -173,7 +172,7 @@ func TestRefreshRefusesTokensItShould(t *testing.T) {
 
 func TestSeedAdmin(t *testing.T) {
 	s := newServer(t)
-	email := fmt.Sprintf("admin-%d@test.local", time.Now().UnixNano())
+	email := unique("admin") + "@test.local"
 	t.Cleanup(func() { s.deleteUser(email) })
 
 	if err := s.svc.SeedAdmin(t.Context(), strings.ToUpper(email), password); err != nil {

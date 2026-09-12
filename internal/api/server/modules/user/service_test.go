@@ -2,7 +2,6 @@ package user
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -18,11 +17,12 @@ func TestListFollowsTheHierarchy(t *testing.T) {
 	lead, mid, junior, stranger := s.hierarchy(t)
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 
-	if _, err := s.svc.List(t.Context(), claimsOf(junior)); !errors.Is(err, ErrForbidden) {
+	_, err := s.svc.List(t.Context(), claimsOf(junior), Page{Limit: defaultPageLimit})
+	if !errors.Is(err, ErrForbidden) {
 		t.Errorf("an employee listing everyone: err = %v, want ErrForbidden", err)
 	}
 
-	below, err := s.svc.List(t.Context(), claimsOf(lead))
+	below, err := s.svc.List(t.Context(), claimsOf(lead), Page{Limit: defaultPageLimit})
 	if err != nil {
 		t.Fatalf("List as a supervisor: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestListFollowsTheHierarchy(t *testing.T) {
 		t.Errorf("a supervisor sees %v, want exactly their subtree (%d, %d)", got, mid.ID, junior.ID)
 	}
 
-	everyone, err := s.svc.List(t.Context(), claimsOf(admin))
+	everyone, err := s.svc.List(t.Context(), claimsOf(admin), Page{Limit: defaultPageLimit})
 	if err != nil {
 		t.Fatalf("List as hr_admin: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestCreateIsForHRAdminAndStartsAsAnEmployee(t *testing.T) {
 	supervisor := s.addUser(t, middleware.RoleSupervisor, nil)
 
 	next := NewUser{
-		Email:    fmt.Sprintf(" New-%d@Example.com ", time.Now().UnixNano()),
+		Email:    " " + strings.ToUpper(unique("New")) + "@Example.com ",
 		Password: "eight888",
 		FullName: "  Budi Santoso ",
 	}
@@ -111,7 +111,7 @@ func TestCreateValidatesItsInput(t *testing.T) {
 		"password too short": {Email: "b@test.local", Password: "seven77", FullName: "Budi"},
 		"no name":            {Email: "b@test.local", Password: "eight888", FullName: "  "},
 		"unknown manager": {
-			Email:    fmt.Sprintf("m-%d@test.local", time.Now().UnixNano()),
+			Email:    unique("m") + "@test.local",
 			Password: "eight888", FullName: "Budi", ManagerID: &unknown,
 		},
 	}
@@ -128,7 +128,7 @@ func TestReplaceRecordsADeactivation(t *testing.T) {
 	s := newServer(t)
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
-	department := s.addDepartment(t, fmt.Sprintf("Ops %d", time.Now().UnixNano()))
+	department := s.addDepartment(t, unique("Ops"))
 
 	details := Details{FullName: "Renamed", IsActive: false, DepartmentID: &department.ID}
 	updated, err := s.svc.Replace(t.Context(), claimsOf(admin), employee.ID, details)
@@ -142,10 +142,7 @@ func TestReplaceRecordsADeactivation(t *testing.T) {
 		t.Error("join_date was cleared, want the stored one kept when none is sent")
 	}
 
-	logs, err := s.repo.auditLogs(t.Context(), entityUser, employee.ID)
-	if err != nil {
-		t.Fatalf("auditLogs: %v", err)
-	}
+	logs := s.auditLogs(t, employee.ID)
 	if len(logs) != 1 {
 		t.Fatalf("%d audit rows, want exactly 1 for the deactivation", len(logs))
 	}
@@ -161,7 +158,7 @@ func TestReplaceRecordsADeactivation(t *testing.T) {
 	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), employee.ID, details); err != nil {
 		t.Fatalf("Replace again: %v", err)
 	}
-	if logs, _ := s.repo.auditLogs(t.Context(), entityUser, employee.ID); len(logs) != 1 {
+	if logs := s.auditLogs(t, employee.ID); len(logs) != 1 {
 		t.Errorf("%d audit rows after reactivating, want the original 1", len(logs))
 	}
 }
@@ -221,10 +218,7 @@ func TestChangeRoleIsForSuperAdminAndIsAudited(t *testing.T) {
 		t.Fatalf("ChangeRole = %+v, %v; want a supervisor", promoted, err)
 	}
 
-	logs, err := s.repo.auditLogs(t.Context(), entityUser, employee.ID)
-	if err != nil {
-		t.Fatalf("auditLogs: %v", err)
-	}
+	logs := s.auditLogs(t, employee.ID)
 	if len(logs) != 1 {
 		t.Fatalf("%d audit rows, want exactly 1", len(logs))
 	}
@@ -239,7 +233,7 @@ func TestChangeRoleIsForSuperAdminAndIsAudited(t *testing.T) {
 	if _, err := s.svc.ChangeRole(t.Context(), claimsOf(owner), employee.ID, middleware.RoleSupervisor); err != nil {
 		t.Fatalf("ChangeRole again: %v", err)
 	}
-	if logs, _ := s.repo.auditLogs(t.Context(), entityUser, employee.ID); len(logs) != 1 {
+	if logs := s.auditLogs(t, employee.ID); len(logs) != 1 {
 		t.Errorf("%d audit rows after granting the same role, want 1", len(logs))
 	}
 }
@@ -267,7 +261,7 @@ func TestDepartmentsNeedTheRightRole(t *testing.T) {
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 	supervisor := s.addUser(t, middleware.RoleSupervisor, nil)
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
-	name := fmt.Sprintf("Security %d", time.Now().UnixNano())
+	name := unique("Security")
 
 	if _, err := s.svc.CreateDepartment(t.Context(), claimsOf(supervisor), name); !errors.Is(err, ErrForbidden) {
 		t.Errorf("a supervisor adding a department: err = %v, want ErrForbidden", err)
@@ -315,7 +309,7 @@ func TestCreateRefusesAPasswordBcryptCannotHash(t *testing.T) {
 	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
 
 	_, err := s.svc.Create(t.Context(), claimsOf(admin), NewUser{
-		Email:    fmt.Sprintf("long-%d@test.local", time.Now().UnixNano()),
+		Email:    unique("long") + "@test.local",
 		Password: strings.Repeat("x", 73), // bcrypt stops at 72 bytes
 		FullName: "Budi",
 	})
@@ -342,5 +336,188 @@ func TestSubtreeLookupFailureSurfaces(t *testing.T) {
 	_, err := svc.Get(t.Context(), claimsOf(lead), other.ID)
 	if !errors.Is(err, errInjected) {
 		t.Errorf("err = %v, want the database failure, not a quiet 403", err)
+	}
+}
+
+func TestHRAdminCannotTouchASuperAdmin(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	peer := s.addUser(t, middleware.RoleHRAdmin, nil)
+	owner := s.addUser(t, middleware.RoleSuperAdmin, nil)
+	details := Details{FullName: "Renamed", IsActive: false}
+
+	// Only super_admin grants roles, so letting hr_admin remove them would lock the system.
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), owner.ID, details); !errors.Is(err, ErrForbidden) {
+		t.Errorf("hr_admin deactivating a super_admin: err = %v, want ErrForbidden", err)
+	}
+	if err := s.svc.Delete(t.Context(), claimsOf(admin), owner.ID); !errors.Is(err, ErrForbidden) {
+		t.Errorf("hr_admin deleting a super_admin: err = %v, want ErrForbidden", err)
+	}
+
+	// Same rank is still ordinary admin work, and a super_admin reaches everyone.
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), peer.ID, details); err != nil {
+		t.Errorf("hr_admin editing another hr_admin: err = %v, want none", err)
+	}
+	if err := s.svc.Delete(t.Context(), claimsOf(owner), admin.ID); err != nil {
+		t.Errorf("super_admin deleting an hr_admin: err = %v, want none", err)
+	}
+}
+
+func TestReplaceRefusesAManagerFromTheirOwnSubtree(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	lead, _, junior, stranger := s.hierarchy(t)
+
+	loop := Details{FullName: lead.FullName, IsActive: true, ManagerID: &junior.ID}
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), lead.ID, loop); !isValidationError(err) {
+		t.Errorf("a manager from their own subtree: err = %v, want a ValidationError", err)
+	}
+
+	fine := Details{FullName: lead.FullName, IsActive: true, ManagerID: &stranger.ID}
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), lead.ID, fine); err != nil {
+		t.Errorf("a manager from outside: err = %v, want none", err)
+	}
+	inOwn, err := s.repo.InSubtree(t.Context(), lead.ID, lead.ID)
+	if err != nil || inOwn {
+		t.Errorf("lead is inside their own subtree = %v, %v; want false", inOwn, err)
+	}
+}
+
+func TestARemovedDepartmentCannotBeAssigned(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	employee := s.addUser(t, middleware.RoleEmployee, nil)
+	department := s.addDepartment(t, unique("Gone"))
+	if err := s.svc.DeleteDepartment(t.Context(), claimsOf(admin), department.ID); err != nil {
+		t.Fatalf("DeleteDepartment: %v", err)
+	}
+
+	_, err := s.svc.Create(t.Context(), claimsOf(admin), NewUser{
+		Email: unique("dept") + "@test.local", Password: "eight888",
+		FullName: "Assigned", DepartmentID: &department.ID,
+	})
+	if !isValidationError(err) {
+		t.Errorf("Create into a removed department: err = %v, want a ValidationError", err)
+	}
+
+	details := Details{FullName: "Renamed", IsActive: true, DepartmentID: &department.ID}
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), employee.ID, details); !isValidationError(err) {
+		t.Errorf("Replace into a removed department: err = %v, want a ValidationError", err)
+	}
+}
+
+func TestDeleteIsAudited(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	employee := s.addUser(t, middleware.RoleEmployee, nil)
+
+	if err := s.svc.Delete(t.Context(), claimsOf(admin), employee.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	logs := s.auditLogs(t, employee.ID)
+	if len(logs) != 1 || logs[0].Action != actionDeleted || logs[0].ActorID != admin.ID {
+		t.Errorf("audit rows = %+v, want one %q by %d: deleted_at says when, not who",
+			logs, actionDeleted, admin.ID)
+	}
+}
+
+func TestListPagesThroughTheDirectory(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	s.addUser(t, middleware.RoleEmployee, nil)
+
+	first, err := s.svc.List(t.Context(), claimsOf(admin), Page{Limit: 1})
+	if err != nil || len(first) != 1 {
+		t.Fatalf("List(limit 1) = %d rows, %v; want 1", len(first), err)
+	}
+	second, err := s.svc.List(t.Context(), claimsOf(admin), Page{Limit: 1, Offset: 1})
+	if err != nil || len(second) != 1 {
+		t.Fatalf("List(offset 1) = %d rows, %v; want 1", len(second), err)
+	}
+	if first[0].ID == second[0].ID {
+		t.Error("the second page repeats the first row")
+	}
+	if _, err := s.svc.List(t.Context(), claimsOf(admin), Page{Limit: maxPageLimit + 1}); !isValidationError(err) {
+		t.Errorf("over the cap: err = %v, want a ValidationError", err)
+	}
+}
+
+func TestTheChecksReportDatabaseFailures(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	employee := s.addUser(t, middleware.RoleEmployee, nil)
+	department := s.addDepartment(t, unique("Faulty"))
+
+	departments := &Service{repo: NewRepository(failingDB(t, "departments"))}
+	_, err := departments.Create(t.Context(), claimsOf(admin), NewUser{
+		Email: "dept@test.local", Password: "eight888", FullName: "Budi", DepartmentID: &department.ID,
+	})
+	if !errors.Is(err, errInjected) {
+		t.Errorf("department lookup: err = %v, want the database failure", err)
+	}
+
+	subtree := &Service{repo: NewRepository(failingAfterDB(t, "subordinates"))}
+	_, err = subtree.Replace(t.Context(), claimsOf(admin), employee.ID, Details{
+		FullName: "Renamed", IsActive: true, ManagerID: &admin.ID,
+	})
+	if !errors.Is(err, errInjected) {
+		t.Errorf("subtree lookup: err = %v, want the database failure", err)
+	}
+
+	lookups := &Service{repo: NewRepository(failingAfterDB(t, "count("))}
+	_, err = lookups.Replace(t.Context(), claimsOf(admin), employee.ID, Details{
+		FullName: "Renamed", IsActive: true, ManagerID: &admin.ID,
+	})
+	if !errors.Is(err, errInjected) {
+		t.Errorf("manager lookup: err = %v, want the database failure", err)
+	}
+}
+
+func TestNobodyDeactivatesTheirOwnAccount(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	owner := s.addUser(t, middleware.RoleSuperAdmin, nil)
+	off := Details{FullName: "Self", IsActive: false, JoinDate: time.Now()}
+
+	// The last super_admin locking themselves out would leave nobody able to grant roles.
+	for name, as := range map[string]User{"hr_admin": admin, "super_admin": owner} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.svc.Replace(t.Context(), claimsOf(as), as.ID, off); !isValidationError(err) {
+				t.Errorf("err = %v, want a ValidationError", err)
+			}
+		})
+	}
+
+	stillOn := Details{FullName: "Self", IsActive: true, JoinDate: time.Now()}
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), admin.ID, stillOn); err != nil {
+		t.Errorf("editing their own details: err = %v, want none", err)
+	}
+	if _, err := s.svc.Replace(t.Context(), claimsOf(owner), admin.ID, off); err != nil {
+		t.Errorf("deactivating someone else: err = %v, want none", err)
+	}
+}
+
+func TestARemovedManagerCannotBeAssigned(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+	employee := s.addUser(t, middleware.RoleEmployee, nil)
+	gone := s.addUser(t, middleware.RoleSupervisor, nil)
+	if err := s.svc.Delete(t.Context(), claimsOf(admin), gone.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Nobody can log in as a removed manager, so their reports would be out of everyone's reach.
+	details := Details{FullName: "Orphan", IsActive: true, JoinDate: time.Now(), ManagerID: &gone.ID}
+	if _, err := s.svc.Replace(t.Context(), claimsOf(admin), employee.ID, details); !isValidationError(err) {
+		t.Errorf("Replace under a removed manager: err = %v, want a ValidationError", err)
+	}
+
+	_, err := s.svc.Create(t.Context(), claimsOf(admin), NewUser{
+		Email: unique("mgr") + "@test.local", Password: "eight888",
+		FullName: "New Hire", ManagerID: &gone.ID,
+	})
+	if !isValidationError(err) {
+		t.Errorf("Create under a removed manager: err = %v, want a ValidationError", err)
 	}
 }

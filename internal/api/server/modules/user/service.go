@@ -44,14 +44,19 @@ func (s *Service) Me(ctx context.Context, claims middleware.Claims) (User, error
 }
 
 // List returns everyone the caller may see: a supervisor's subtree, or all of them for hr_admin up.
-func (s *Service) List(ctx context.Context, claims middleware.Claims) ([]User, error) {
-	switch {
-	case claims.Role.AtLeast(middleware.RoleHRAdmin):
-		return s.repo.List(ctx)
-	case claims.Role.AtLeast(middleware.RoleSupervisor):
-		return s.repo.ListSubtree(ctx, claims.UserID)
+func (s *Service) List(ctx context.Context, claims middleware.Claims, page Page) ([]User, error) {
+	if !claims.Role.AtLeast(middleware.RoleSupervisor) {
+		return nil, ErrForbidden
 	}
-	return nil, ErrForbidden
+
+	page, err := checkPage(page)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Role.AtLeast(middleware.RoleHRAdmin) {
+		return s.repo.List(ctx, page)
+	}
+	return s.repo.ListSubtree(ctx, claims.UserID, page)
 }
 
 // Get returns one employee: themselves, someone in their subtree, or anyone for hr_admin up.
@@ -74,6 +79,12 @@ func (s *Service) Create(ctx context.Context, claims middleware.Claims, next New
 	}
 	fullName, err := checkName("full_name", next.FullName)
 	if err != nil {
+		return User{}, err
+	}
+	if err := s.checkDepartment(ctx, next.DepartmentID); err != nil {
+		return User{}, err
+	}
+	if err := s.checkManagerFor(ctx, 0, next.ManagerID); err != nil {
 		return User{}, err
 	}
 
@@ -114,12 +125,21 @@ func (s *Service) Replace(
 	if err != nil {
 		return User{}, err
 	}
-	if err := checkManager(id, details.ManagerID); err != nil {
-		return User{}, err
+	if id == claims.UserID && !details.IsActive {
+		return User{}, invalid("an admin cannot deactivate their own account")
 	}
 
 	before, err := s.repo.ByID(ctx, id)
 	if err != nil {
+		return User{}, err
+	}
+	if !claims.Role.AtLeast(middleware.Role(before.Role)) {
+		return User{}, ErrForbidden
+	}
+	if err := s.checkManagerFor(ctx, id, details.ManagerID); err != nil {
+		return User{}, err
+	}
+	if err := s.checkDepartment(ctx, details.DepartmentID); err != nil {
 		return User{}, err
 	}
 	if details.JoinDate.IsZero() {
@@ -150,7 +170,19 @@ func (s *Service) Delete(ctx context.Context, claims middleware.Claims, id int64
 	if id == claims.UserID {
 		return invalid("an admin cannot delete their own account")
 	}
-	return s.repo.SoftDelete(ctx, id)
+
+	// An hr_admin must not remove a super_admin: only super_admin grants roles, so that would leave
+	// nobody able to, and hr_admin cannot promote anyone to fix it.
+	target, err := s.repo.ByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !claims.Role.AtLeast(middleware.Role(target.Role)) {
+		return ErrForbidden
+	}
+
+	audit := auditRow(claims.UserID, actionDeleted, id, `{"deleted": false}`, `{"deleted": true}`)
+	return s.repo.SoftDelete(ctx, id, audit)
 }
 
 // ChangeRole grants a role as super_admin and records it. hr_admin cannot: whoever approves
@@ -225,6 +257,51 @@ func (s *Service) DeleteDepartment(ctx context.Context, claims middleware.Claims
 		return ErrForbidden
 	}
 	return s.repo.DeleteDepartment(ctx, id)
+}
+
+// checkDepartment refuses a department that was removed; the foreign key would still accept it.
+func (s *Service) checkDepartment(ctx context.Context, departmentID *int64) error {
+	if departmentID == nil {
+		return nil
+	}
+
+	exists, err := s.repo.DepartmentExists(ctx, *departmentID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return invalid("department_id %d does not exist", *departmentID)
+	}
+	return nil
+}
+
+// checkManagerFor refuses a manager who was removed, who is the user themselves, or who reports to
+// them. A removed manager would be worse than none: nobody can log in as them, so the employee would
+// fall out of every supervisor's reach. A loop would make someone their own supervisor.
+func (s *Service) checkManagerFor(ctx context.Context, id int64, managerID *int64) error {
+	if managerID == nil {
+		return nil
+	}
+	if err := checkManager(id, managerID); err != nil {
+		return err
+	}
+
+	exists, err := s.repo.Exists(ctx, *managerID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return invalid("manager_id %d does not exist", *managerID)
+	}
+
+	below, err := s.repo.InSubtree(ctx, id, *managerID)
+	if err != nil {
+		return err
+	}
+	if below {
+		return invalid("that manager reports to this user, which would make the hierarchy a loop")
+	}
+	return nil
 }
 
 // reach answers whether claims may look at user id at all.

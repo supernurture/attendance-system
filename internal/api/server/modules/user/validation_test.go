@@ -74,3 +74,23 @@ func isValidationError(err error) bool {
 	_, ok := errors.AsType[*ValidationError](err)
 	return ok
 }
+
+func TestCheckPage(t *testing.T) {
+	if page, err := checkPage(Page{Limit: defaultPageLimit}); err != nil || page.Limit != defaultPageLimit {
+		t.Errorf("checkPage(default) = %+v, %v; want it accepted", page, err)
+	}
+	if page, err := checkPage(Page{Limit: maxPageLimit, Offset: 20}); err != nil || page.Limit != maxPageLimit {
+		t.Errorf("checkPage(max) = %+v, %v; want it accepted", page, err)
+	}
+	for name, page := range map[string]Page{
+		"over the cap":     {Limit: maxPageLimit + 1},
+		"negative limit":   {Limit: -1},
+		"an explicit zero": {Limit: 0},
+		"negative offset":  {Limit: 10, Offset: -1},
+		"offset too deep":  {Limit: 10, Offset: maxPageOffset + 1},
+	} {
+		if _, err := checkPage(page); !isValidationError(err) {
+			t.Errorf("%s: err = %v, want a ValidationError", name, err)
+		}
+	}
+}

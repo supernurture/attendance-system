@@ -114,6 +114,15 @@ type NotFound = Error
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
+// ListUsersParams defines parameters for ListUsers.
+type ListUsersParams struct {
+	// Limit Rows to return, 1 to 500. Defaults to 100.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Rows to skip. Defaults to 0.
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // CreateDepartmentJSONRequestBody defines body for CreateDepartment for application/json ContentType.
 type CreateDepartmentJSONRequestBody = DepartmentRequest
 
@@ -148,7 +157,7 @@ type ServerInterface interface {
 	GetMe(c *gin.Context)
 	// ListUsers List employees in reach
 	// (GET /users)
-	ListUsers(c *gin.Context)
+	ListUsers(c *gin.Context, params ListUsersParams)
 	// CreateUser Add an employee
 	// (POST /users)
 	CreateUser(c *gin.Context)
@@ -267,6 +276,28 @@ func (siw *ServerInterfaceWrapper) GetMe(c *gin.Context) {
 // ListUsers operation middleware
 func (siw *ServerInterfaceWrapper) ListUsers(c *gin.Context) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListUsersParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", c.Request.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter offset: %w", err), http.StatusBadRequest)
+		return
+	}
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -274,7 +305,7 @@ func (siw *ServerInterfaceWrapper) ListUsers(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.ListUsers(c)
+	siw.Handler.ListUsers(c, params)
 }
 
 // CreateUser operation middleware
@@ -768,6 +799,7 @@ func (response GetMe404JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 }
 
 type ListUsersRequestObject struct {
+	Params ListUsersParams
 }
 
 type ListUsersResponseObject interface {
@@ -784,6 +816,20 @@ func (response ListUsers200JSONResponse) VisitListUsersResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListUsers400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListUsers400JSONResponse) VisitListUsersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -908,6 +954,20 @@ type DeleteUser204Response struct {
 func (response DeleteUser204Response) VisitDeleteUserResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
+}
+
+type DeleteUser400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteUser400JSONResponse) VisitDeleteUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type DeleteUser401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -1407,8 +1467,10 @@ func (sh *strictHandler) GetMe(ctx *gin.Context) {
 }
 
 // ListUsers operation middleware
-func (sh *strictHandler) ListUsers(ctx *gin.Context) {
+func (sh *strictHandler) ListUsers(ctx *gin.Context, params ListUsersParams) {
 	var request ListUsersRequestObject
+
+	request.Params = params
 
 	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
 		return sh.ssi.ListUsers(ctx, request.(ListUsersRequestObject))

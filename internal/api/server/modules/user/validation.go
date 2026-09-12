@@ -63,3 +63,23 @@ func checkManager(userID int64, managerID *int64) error {
 	}
 	return nil
 }
+
+// Page is one window of a listing.
+type Page struct {
+	Limit  int
+	Offset int
+}
+
+// checkPage refuses a window the database should not be asked for. The default for an absent limit
+// belongs to the handler, so an explicit limit=0 is a mistake rather than a silent 100.
+func checkPage(page Page) (Page, error) {
+	switch {
+	case page.Limit < 1 || page.Limit > maxPageLimit:
+		return Page{}, invalid("limit must be between 1 and %d", maxPageLimit)
+	case page.Offset < 0:
+		return Page{}, invalid("offset cannot be negative")
+	case page.Offset > maxPageOffset:
+		return Page{}, invalid("offset must be at most %d; narrow the listing instead", maxPageOffset)
+	}
+	return page, nil
+}
