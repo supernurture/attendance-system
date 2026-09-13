@@ -670,14 +670,30 @@ func TestLookup(t *testing.T) {
 func TestIsPast(t *testing.T) {
 	t.Parallel()
 
-	if !isPast(pastDate(1)) {
+	today := day(2030, time.March, 4)
+	if !isPast(day(2030, time.March, 3), today) {
 		t.Error("yesterday is past")
 	}
-	if isPast(dateOnly(time.Now())) {
-		t.Error("today is not past: the day is still being worked")
+	if isPast(time.Date(2030, time.March, 4, 23, 0, 0, 0, time.UTC), today) {
+		t.Error("today is not past, whatever its time of day: the day is still being worked")
 	}
-	if isPast(futureDate(1)) {
+	if isPast(day(2030, time.March, 5), today) {
 		t.Error("tomorrow is not past")
+	}
+}
+
+// UTC+14 and UTC-11 are 25 hours apart, so their dates differ at every moment; the server's own zone must not
+// decide either.
+func TestTodayIsTheCompanyDate(t *testing.T) {
+	t.Parallel()
+
+	ahead, _ := time.LoadLocation("Pacific/Kiritimati")
+	behind, _ := time.LoadLocation("Pacific/Pago_Pago")
+	if early, late := NewService(nil, behind).today(), NewService(nil, ahead).today(); !late.After(early) {
+		t.Errorf("today in UTC-11 = %v, in UTC+14 = %v; want the later zone a day on", early, late)
+	}
+	if got, want := NewService(nil, ahead).today(), dateOnly(time.Now().In(ahead)); !got.Equal(want) {
+		t.Errorf("today = %v, want %v", got, want)
 	}
 }
 

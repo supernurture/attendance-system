@@ -78,7 +78,7 @@ func newServer(t *testing.T) *server {
 	gin.SetMode(gin.TestMode)
 
 	db := testDB(t)
-	s := &server{db: db, svc: NewService(db), repo: NewRepository(db)}
+	s := &server{db: db, svc: NewService(db, time.UTC), repo: NewRepository(db)}
 
 	router := gin.New()
 	router.ContextWithFallback = true
@@ -244,7 +244,7 @@ func (s *server) failingRouter(t *testing.T) *gin.Engine {
 
 	router := gin.New()
 	router.ContextWithFallback = true
-	svc := &Service{repo: NewRepository(failingDB(t, ""))}
+	svc := &Service{repo: NewRepository(failingDB(t, "")), zone: time.UTC}
 	usercontract.RegisterHandlers(router.Group("", middleware.Auth(testSecret)),
 		usercontract.NewStrictHandler(NewHandler(svc), nil))
 	return router

@@ -299,7 +299,7 @@ func TestRoutesRefuseAnEmployeeAndABadBody(t *testing.T) {
 }
 
 func TestHandlerRefusesAnUnguardedRoute(t *testing.T) {
-	h := NewHandler(NewService(nil))
+	h := NewHandler(NewService(nil, time.UTC))
 	ctx := context.Background() // no claims: the route was mounted without middleware.Auth
 
 	calls := map[string]func() error{

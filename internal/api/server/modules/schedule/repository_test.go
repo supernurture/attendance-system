@@ -94,7 +94,7 @@ func TestRepositoryScheduleInUse(t *testing.T) {
 	ctx := context.Background()
 
 	schedule := s.weekdaySchedule(t)
-	inUse, err := s.repo.ScheduleInUse(ctx, schedule.ID)
+	inUse, err := s.repo.ScheduleInUse(ctx, schedule.ID, futureDate(0))
 	if err != nil {
 		t.Fatalf("ScheduleInUse: %v", err)
 	}
@@ -104,13 +104,13 @@ func TestRepositoryScheduleInUse(t *testing.T) {
 
 	// Someone keeping it as their default.
 	keeper := s.person(t, "employee", &schedule.ID)
-	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID); err != nil || !inUse {
+	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID, futureDate(0)); err != nil || !inUse {
 		t.Fatalf("ScheduleInUse with a keeper = %v, %v", inUse, err)
 	}
 
 	// A removed employee no longer counts: nobody is left whose days would break.
 	s.db.Exec("UPDATE users SET deleted_at = now() WHERE id = ?", keeper.ID)
-	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID); err != nil || inUse {
+	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID, futureDate(0)); err != nil || inUse {
 		t.Fatalf("ScheduleInUse with a deleted keeper = %v, %v", inUse, err)
 	}
 
@@ -118,14 +118,14 @@ func TestRepositoryScheduleInUse(t *testing.T) {
 	// history reads back whether the schedule is retired or not.
 	past := s.person(t, "employee", nil)
 	s.addAssignment(t, past.ID, pastDate(30), &schedule.ID)
-	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID); err != nil || inUse {
+	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID, futureDate(0)); err != nil || inUse {
 		t.Fatalf("ScheduleInUse with only past roster = %v, %v", inUse, err)
 	}
 
 	// Roster from today on does count: those days are still to be worked.
 	rostered := s.person(t, "employee", nil)
 	s.addAssignment(t, rostered.ID, futureDate(2), &schedule.ID)
-	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID); err != nil || !inUse {
+	if inUse, err = s.repo.ScheduleInUse(ctx, schedule.ID, futureDate(0)); err != nil || !inUse {
 		t.Fatalf("ScheduleInUse with a roster entry = %v, %v", inUse, err)
 	}
 }
@@ -133,10 +133,11 @@ func TestRepositoryScheduleInUse(t *testing.T) {
 func TestRepositoryScheduleInUseFails(t *testing.T) {
 	ctx := context.Background()
 
-	if _, err := NewRepository(failingDB(t, "users")).ScheduleInUse(ctx, 1); !errors.Is(err, errInjected) {
+	_, err := NewRepository(failingDB(t, "users")).ScheduleInUse(ctx, 1, futureDate(0))
+	if !errors.Is(err, errInjected) {
 		t.Errorf("error = %v, want the injected failure", err)
 	}
-	_, err := NewRepository(failingDB(t, "shift_assignments")).ScheduleInUse(ctx, 1)
+	_, err = NewRepository(failingDB(t, "shift_assignments")).ScheduleInUse(ctx, 1, futureDate(0))
 	if !errors.Is(err, errInjected) {
 		t.Errorf("error = %v, want the injected failure", err)
 	}

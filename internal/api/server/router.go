@@ -59,6 +59,11 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 		return fmt.Errorf("redis.%s is required in the config", redisName)
 	}
 
+	zone, err := time.LoadLocation(cfg.Attendance.Timezone)
+	if err != nil {
+		return fmt.Errorf("attendance.timezone: %w", err)
+	}
+
 	secret := []byte(cfg.Auth.JWTSecret)
 	authSvc := auth.NewService(db, cache, secret)
 	if err := seedAdmin(cfg.Auth, authSvc); err != nil {
@@ -72,10 +77,10 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 
 	protected := router.Group("", middleware.Auth(secret))
 	usercontract.RegisterHandlers(protected,
-		usercontract.NewStrictHandlerWithOptions(user.NewHandler(user.NewService(db)), nil, userOptions))
+		usercontract.NewStrictHandlerWithOptions(user.NewHandler(user.NewService(db, zone)), nil, userOptions))
 	schedulecontract.RegisterHandlers(protected,
 		schedulecontract.NewStrictHandlerWithOptions(
-			schedule.NewHandler(schedule.NewService(db)), nil, scheduleOptions))
+			schedule.NewHandler(schedule.NewService(db, zone)), nil, scheduleOptions))
 	uploadHandler := upload.NewHandler(upload.NewService(deps.Storage))
 	uploadcontract.RegisterHandlers(protected,
 		uploadcontract.NewStrictHandlerWithOptions(uploadHandler, nil, uploadOptions))

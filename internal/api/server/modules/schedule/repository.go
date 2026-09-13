@@ -145,16 +145,16 @@ func (r *Repository) DeleteSchedule(ctx context.Context, id int64) error {
 }
 
 // ScheduleInUse reports whether a live employee still keeps this schedule by default or is rostered
-// onto it from today on, which is what stops it being removed. Past roster does not count: resolution
-// loads schedules Unscoped, so history keeps reading back either way.
-func (r *Repository) ScheduleInUse(ctx context.Context, id int64) (bool, error) {
+// onto it from today on, the company's date, which is what stops it being removed. Past roster does not
+// count: resolution loads schedules Unscoped, so history keeps reading back either way.
+func (r *Repository) ScheduleInUse(ctx context.Context, id int64, today time.Time) (bool, error) {
 	var users, assignments int64
 	if err := r.db.WithContext(ctx).Model(&employee{}).
 		Where("default_schedule_id = ? AND deleted_at IS NULL", id).Count(&users).Error; err != nil {
 		return false, err
 	}
 	err := r.db.WithContext(ctx).Model(&ShiftAssignment{}).
-		Where("schedule_id = ? AND work_date >= CURRENT_DATE", id).Count(&assignments).Error
+		Where("schedule_id = ? AND work_date >= ?", id, today).Count(&assignments).Error
 	return users+assignments > 0, err
 }
 
