@@ -14,10 +14,12 @@ import (
 
 type Service struct {
 	repo *Repository
+	zone *time.Location
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{repo: NewRepository(db)}
+// NewService measures "today", which decides what is past, in the company's zone rather than the server's.
+func NewService(db *gorm.DB, zone *time.Location) *Service {
+	return &Service{repo: NewRepository(db), zone: zone}
 }
 
 // Hours are the fields one work schedule carries. The times stay text until the service parses them,
@@ -51,7 +53,7 @@ type Assignment struct {
 // Days applies rule A across a span for one person: the roster first, then their own schedule, with an
 // observed holiday turning either off.
 func (s *Service) Days(ctx context.Context, userID int64, span Range) ([]Day, error) {
-	span, err := checkRange(span)
+	span, err := CheckRange(span)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +141,7 @@ func (s *Service) DeleteSchedule(ctx context.Context, claims middleware.Claims, 
 		return apperr.ErrForbidden
 	}
 
-	inUse, err := s.repo.ScheduleInUse(ctx, id)
+	inUse, err := s.repo.ScheduleInUse(ctx, id, s.today())
 	if err != nil {
 		return err
 	}
@@ -153,7 +155,7 @@ func (s *Service) ListHolidays(ctx context.Context, claims middleware.Claims, sp
 	if !claims.Role.AtLeast(middleware.RoleSupervisor) {
 		return nil, apperr.ErrForbidden
 	}
-	span, err := checkRange(span)
+	span, err := CheckRange(span)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +174,7 @@ func (s *Service) CreateHoliday(
 
 	// The repository fills in the entity id, which only exists once the row does.
 	var audit *AuditLog
-	if isPast(holiday.Date) {
+	if isPast(holiday.Date, s.today()) {
 		audit = auditRow(claims.UserID, actionHolidayChanged, entityHoliday, 0,
 			nullJSON, holidayJSON(holiday.Date, holiday.Name))
 	}
@@ -199,7 +201,7 @@ func (s *Service) ReplaceHoliday(
 	}
 
 	var audit *AuditLog
-	if isPast(before.Date) || isPast(holiday.Date) {
+	if today := s.today(); isPast(before.Date, today) || isPast(holiday.Date, today) {
 		audit = auditRow(claims.UserID, actionHolidayChanged, entityHoliday, id,
 			holidayJSON(before.Date, before.Name), holidayJSON(holiday.Date, holiday.Name))
 	}
@@ -217,7 +219,7 @@ func (s *Service) DeleteHoliday(ctx context.Context, claims middleware.Claims, i
 	}
 
 	var audit *AuditLog
-	if isPast(before.Date) {
+	if isPast(before.Date, s.today()) {
 		audit = auditRow(claims.UserID, actionHolidayDeleted, entityHoliday, id,
 			holidayJSON(before.Date, before.Name), nullJSON)
 	}
@@ -269,7 +271,7 @@ func (s *Service) ListAssignments(
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
 		return nil, apperr.ErrForbidden
 	}
-	span, err := checkRange(span)
+	span, err := CheckRange(span)
 	if err != nil {
 		return nil, err
 	}
@@ -300,10 +302,11 @@ func (s *Service) Assign(
 
 	// Only a past-dated row is worth auditing, and only then does the write pay for reading what it
 	// replaces; the repository calls this back inside its transaction.
+	today := s.today()
 	var audits func([]ShiftAssignment) []AuditLog
-	if slices.ContainsFunc(rows, func(row ShiftAssignment) bool { return isPast(row.WorkDate) }) {
+	if slices.ContainsFunc(rows, func(row ShiftAssignment) bool { return isPast(row.WorkDate, today) }) {
 		audits = func(before []ShiftAssignment) []AuditLog {
-			return auditAssigned(claims.UserID, rows, before)
+			return auditAssigned(claims.UserID, rows, before, today)
 		}
 	}
 
@@ -324,7 +327,7 @@ func (s *Service) DeleteAssignment(ctx context.Context, claims middleware.Claims
 	}
 
 	var audit *AuditLog
-	if isPast(before.WorkDate) {
+	if isPast(before.WorkDate, s.today()) {
 		audit = auditRow(claims.UserID, actionShiftDeleted, entityShift, before.UserID,
 			assignmentJSON(before.WorkDate, before.ScheduleID), nullJSON)
 	}
@@ -333,7 +336,7 @@ func (s *Service) DeleteAssignment(ctx context.Context, claims middleware.Claims
 
 // auditAssigned builds the audit rows for the past-dated part of a bulk write, naming what each date
 // held before so the entry says what the roster changed from.
-func auditAssigned(actorID int64, rows, before []ShiftAssignment) []AuditLog {
+func auditAssigned(actorID int64, rows, before []ShiftAssignment, today time.Time) []AuditLog {
 	held := make(map[string]ShiftAssignment, len(before))
 	for _, row := range before {
 		held[slot(row.UserID, row.WorkDate)] = row
@@ -341,7 +344,7 @@ func auditAssigned(actorID int64, rows, before []ShiftAssignment) []AuditLog {
 
 	audits := make([]AuditLog, 0, len(rows))
 	for _, row := range rows {
-		if !isPast(row.WorkDate) {
+		if !isPast(row.WorkDate, today) {
 			continue
 		}
 
@@ -459,7 +462,12 @@ func slot(userID int64, date time.Time) string {
 	return fmt.Sprintf("%d@%s", userID, key(date))
 }
 
+// today is the calendar date it is now in the company's zone.
+func (s *Service) today() time.Time {
+	return dateOnly(time.Now().In(s.zone))
+}
+
 // isPast reports whether the date is before today, which is what makes an edit worth auditing.
-func isPast(date time.Time) bool {
-	return dateOnly(date).Before(dateOnly(time.Now()))
+func isPast(date, today time.Time) bool {
+	return dateOnly(date).Before(today)
 }

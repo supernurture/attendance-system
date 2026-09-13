@@ -1,0 +1,610 @@
+openapi: 3.0.3
+info:
+  title: Attendance API
+  description: |
+    Check-in and check-out with a selfie and GPS, the daily report, who is in today, and attendance
+    corrections. Attendance is never edited directly: every change after the fact is a correction that
+    somebody above the employee approves, which is what keeps the old times on record.
+  version: 1.0.0
+tags:
+  - name: attendance
+  - name: correction
+security:
+  - bearerAuth: []
+paths:
+  /attendance/check-in:
+    post:
+      operationId: checkIn
+      tags:
+        - attendance
+      summary: Check in
+      description: |
+        The selfie is uploaded first through POST /uploads/intent with purpose attendance_photo. The work
+        date is the working shift whose window holds this moment, from 4 hours before its start to its end;
+        otherwise today. Outside every office the check-in is flagged, not refused, unless the server
+        enforces the geofence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkRequest'
+      responses:
+        '201':
+          description: Checked in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attendance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /attendance/check-out:
+    post:
+      operationId: checkOut
+      tags:
+        - attendance
+      summary: Check out
+      description: |
+        Closes the caller's latest open check-in, up to 8 hours past its shift's end, or within 24 hours on a day
+        with no hours. Anything older needs a correction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkRequest'
+      responses:
+        '200':
+          description: Checked out.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attendance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /attendance/me:
+    get:
+      operationId: listMyAttendance
+      tags:
+        - attendance
+      summary: List the caller's attendance
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: Inclusive, and at most 366 days after from.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Attendance by work date.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attendance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /attendance/me/daily-report:
+    put:
+      operationId: saveDailyReport
+      tags:
+        - attendance
+      summary: Write the daily report for a work date
+      description: Replaces the report on the caller's attendance for that date, which must exist.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DailyReportRequest'
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attendance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /attendance/{id}/photo/{side}:
+    get:
+      operationId: getAttendancePhoto
+      tags:
+        - attendance
+      summary: Redirect to a check-in or check-out selfie
+      description: |
+        The owner, a supervisor above them, or hr_admin. The redirect is a presigned URL that anyone holding
+        it can open until it expires.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: side
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - in
+              - out
+      responses:
+        '302':
+          description: The photo's presigned URL.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /attendance/whos-in:
+    get:
+      operationId: getWhosIn
+      tags:
+        - attendance
+      summary: Who has and has not come in on a date
+      description: supervisor for everyone below them, hr_admin for everyone active.
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: One entry per person, by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Presence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /attendance/corrections:
+    post:
+      operationId: requestCorrection
+      tags:
+        - correction
+      summary: Ask for a day's times to be corrected
+      description: |
+        For the caller, or with user_id for someone else as hr_admin. One pending request per day, for a work
+        date no later than today.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CorrectionRequest'
+      responses:
+        '201':
+          description: Filed, pending a decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Correction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /attendance/corrections/me:
+    get:
+      operationId: listMyCorrections
+      tags:
+        - correction
+      summary: List corrections to the caller's attendance
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Correction'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /attendance/corrections/pending:
+    get:
+      operationId: listPendingCorrections
+      tags:
+        - correction
+      summary: List corrections waiting for the caller's decision
+      description: supervisor for everyone below them, hr_admin for everyone; never the caller's own.
+      responses:
+        '200':
+          description: Oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Correction'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /attendance/corrections/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      operationId: cancelCorrection
+      tags:
+        - correction
+      summary: Withdraw a pending correction
+      description: The employee it is for, or whoever filed it.
+      responses:
+        '204':
+          description: Cancelled.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /attendance/corrections/{id}/decision:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: decideCorrection
+      tags:
+        - correction
+      summary: Approve or reject a pending correction
+      description: |
+        A supervisor above the employee, or hr_admin; never for oneself. Approving writes the new times to the
+        attendance, creating it when there was none, and records the times it replaced on the correction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+      responses:
+        '200':
+          description: Decided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Correction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: The request breaks a rule; the message says which.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid access token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller does not reach this person, or the upload key is someone else's.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such record.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Already checked in for that date, or the correction is no longer pending.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    MarkRequest:
+      type: object
+      required:
+        - photo_key
+        - lat
+        - lng
+        - accuracy_m
+        - mock_location
+      properties:
+        photo_key:
+          type: string
+          description: The key POST /uploads/intent returned, already uploaded.
+        lat:
+          type: number
+          format: double
+          example: -6.2088
+        lng:
+          type: number
+          format: double
+          example: 106.8456
+        accuracy_m:
+          type: number
+          format: double
+          description: The phone's reported accuracy radius, in meters.
+          example: 12
+        mock_location:
+          type: boolean
+          description: What Android reports; stored for the supervisor, never trusted as proof.
+    DailyReportRequest:
+      type: object
+      required:
+        - work_date
+        - content
+      properties:
+        work_date:
+          type: string
+          format: date
+        content:
+          type: string
+          description: At most 5000 characters.
+    Evidence:
+      type: object
+      required:
+        - lat
+        - lng
+        - accuracy_m
+        - within_geofence
+        - mock_location
+      properties:
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        accuracy_m:
+          type: number
+          format: double
+        office_location_id:
+          type: integer
+          format: int64
+          description: The office the point falls inside, or else the nearest one.
+        within_geofence:
+          type: boolean
+        mock_location:
+          type: boolean
+    Attendance:
+      type: object
+      required:
+        - id
+        - user_id
+        - work_date
+        - check_in_at
+        - late_minutes
+        - early_leave_minutes
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        work_date:
+          type: string
+          format: date
+        schedule_id:
+          type: integer
+          format: int64
+          description: The schedule in force at check-in; absent on a day with no hours.
+        check_in_at:
+          type: string
+          format: date-time
+        check_out_at:
+          type: string
+          format: date-time
+        check_in:
+          $ref: '#/components/schemas/Evidence'
+        check_out:
+          $ref: '#/components/schemas/Evidence'
+        late_minutes:
+          type: integer
+          description: Whole minutes past the shift's start, less its grace.
+        early_leave_minutes:
+          type: integer
+        daily_report:
+          type: string
+        daily_report_updated_at:
+          type: string
+          format: date-time
+    Presence:
+      type: object
+      required:
+        - user_id
+        - full_name
+        - status
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        full_name:
+          type: string
+        department_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          description: |
+            present or late with an attendance; otherwise holiday, off (not a working day), not_yet (the shift
+            and its grace have not started), or absent.
+          enum:
+            - present
+            - late
+            - holiday
+            - 'off'
+            - not_yet
+            - absent
+        attendance:
+          $ref: '#/components/schemas/Attendance'
+    CorrectionRequest:
+      type: object
+      required:
+        - work_date
+        - reason
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          description: hr_admin only, to file for someone else. Defaults to the caller.
+        work_date:
+          type: string
+          format: date
+        proposed_check_in_at:
+          type: string
+          format: date-time
+        proposed_check_out_at:
+          type: string
+          format: date-time
+          description: At least one of the two times is required.
+        reason:
+          type: string
+          description: At most 500 characters.
+    DecisionRequest:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          type: string
+          enum:
+            - approve
+            - reject
+        note:
+          type: string
+          description: At most 500 characters.
+    Correction:
+      type: object
+      required:
+        - id
+        - user_id
+        - work_date
+        - requested_by
+        - reason
+        - status
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        work_date:
+          type: string
+          format: date
+        requested_by:
+          type: integer
+          format: int64
+        proposed_check_in_at:
+          type: string
+          format: date-time
+        proposed_check_out_at:
+          type: string
+          format: date-time
+        old_check_in_at:
+          type: string
+          format: date-time
+          description: What the attendance held before approval; absent when there was no attendance.
+        old_check_out_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+            - cancelled
+        reviewed_by:
+          type: integer
+          format: int64
+        reviewed_at:
+          type: string
+          format: date-time
+        review_note:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string

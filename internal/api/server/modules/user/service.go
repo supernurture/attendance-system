@@ -14,10 +14,12 @@ import (
 
 type Service struct {
 	repo *Repository
+	zone *time.Location
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{repo: NewRepository(db)}
+// NewService dates a join with no join_date in the company's zone, not the server's.
+func NewService(db *gorm.DB, zone *time.Location) *Service {
+	return &Service{repo: NewRepository(db), zone: zone}
 }
 
 // NewUser is what hr_admin supplies to add an employee; the role is granted separately.
@@ -99,7 +101,8 @@ func (s *Service) Create(ctx context.Context, claims middleware.Claims, next New
 		return User{}, apperr.Invalid("password: %v", err) // bcrypt reports its own 72-byte maximum
 	}
 	if next.JoinDate.IsZero() {
-		next.JoinDate = time.Now()
+		local := time.Now().In(s.zone)
+		next.JoinDate = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
 	}
 
 	user := User{

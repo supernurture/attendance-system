@@ -8,11 +8,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"attendance-system/internal/api/server/modules/attendance"
 	"attendance-system/internal/api/server/modules/auth"
 	"attendance-system/internal/api/server/modules/health"
 	"attendance-system/internal/api/server/modules/schedule"
 	"attendance-system/internal/api/server/modules/upload"
 	"attendance-system/internal/api/server/modules/user"
+	attendancecontract "attendance-system/internal/api/server/oapicodegen/attendance"
 	authcontract "attendance-system/internal/api/server/oapicodegen/auth"
 	healthcontract "attendance-system/internal/api/server/oapicodegen/health"
 	schedulecontract "attendance-system/internal/api/server/oapicodegen/schedule"
@@ -59,6 +61,11 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 		return fmt.Errorf("redis.%s is required in the config", redisName)
 	}
 
+	zone, err := time.LoadLocation(cfg.Attendance.Timezone)
+	if err != nil {
+		return fmt.Errorf("attendance.timezone: %w", err)
+	}
+
 	secret := []byte(cfg.Auth.JWTSecret)
 	authSvc := auth.NewService(db, cache, secret)
 	if err := seedAdmin(cfg.Auth, authSvc); err != nil {
@@ -72,13 +79,17 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 
 	protected := router.Group("", middleware.Auth(secret))
 	usercontract.RegisterHandlers(protected,
-		usercontract.NewStrictHandlerWithOptions(user.NewHandler(user.NewService(db)), nil, userOptions))
+		usercontract.NewStrictHandlerWithOptions(user.NewHandler(user.NewService(db, zone)), nil, userOptions))
 	schedulecontract.RegisterHandlers(protected,
 		schedulecontract.NewStrictHandlerWithOptions(
-			schedule.NewHandler(schedule.NewService(db)), nil, scheduleOptions))
+			schedule.NewHandler(schedule.NewService(db, zone)), nil, scheduleOptions))
 	uploadHandler := upload.NewHandler(upload.NewService(deps.Storage))
 	uploadcontract.RegisterHandlers(protected,
 		uploadcontract.NewStrictHandlerWithOptions(uploadHandler, nil, uploadOptions))
+	attendanceHandler := attendance.NewHandler(
+		attendance.NewService(db, deps.Storage, zone, cfg.Attendance.GeofenceEnforce))
+	attendancecontract.RegisterHandlers(protected,
+		attendancecontract.NewStrictHandlerWithOptions(attendanceHandler, nil, attendanceOptions))
 	return nil
 }
 
@@ -106,6 +117,9 @@ var (
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 	scheduleOptions = schedulecontract.StrictGinServerOptions{
+		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
+	}
+	attendanceOptions = attendancecontract.StrictGinServerOptions{
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 )

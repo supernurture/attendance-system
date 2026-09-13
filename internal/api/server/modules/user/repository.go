@@ -99,9 +99,9 @@ func (r *Repository) List(ctx context.Context, page Page) ([]User, error) {
 // because Postgres may return equal names in any order.
 const listOrder = "full_name, id"
 
-// subtree walks manager_id down from managerID. The CYCLE clause is what keeps circular manager
+// SubtreeQuery walks manager_id down from managerID. The CYCLE clause is what keeps circular manager
 // data from looping forever; without it the query never returns.
-const subtree = `WITH RECURSIVE subordinates AS (
+const SubtreeQuery = `WITH RECURSIVE subordinates AS (
 	SELECT id FROM users WHERE manager_id = ? AND deleted_at IS NULL
 	UNION
 	SELECT u.id FROM users u JOIN subordinates s ON u.manager_id = s.id WHERE u.deleted_at IS NULL
@@ -112,7 +112,7 @@ SELECT id FROM subordinates`
 func (r *Repository) ListSubtree(ctx context.Context, managerID int64, page Page) ([]User, error) {
 	var users []User
 	err := r.db.WithContext(ctx).
-		Where("id IN (?)", r.db.Raw(subtree, managerID)).
+		Where("id IN (?)", r.db.Raw(SubtreeQuery, managerID)).
 		Order(listOrder).Limit(page.Limit).Offset(page.Offset).Find(&users).Error
 	return users, err
 }
@@ -121,7 +121,7 @@ func (r *Repository) ListSubtree(ctx context.Context, managerID int64, page Page
 func (r *Repository) InSubtree(ctx context.Context, managerID, userID int64) (bool, error) {
 	var found int64
 	err := r.db.WithContext(ctx).Model(&User{}).
-		Where("id = ? AND id IN (?)", userID, r.db.Raw(subtree, managerID)).
+		Where("id = ? AND id IN (?)", userID, r.db.Raw(SubtreeQuery, managerID)).
 		Count(&found).Error
 	return found > 0, err
 }

@@ -97,8 +97,28 @@ func TestCreateIsForHRAdminAndStartsAsAnEmployee(t *testing.T) {
 	if bcrypt.CompareHashAndPassword([]byte(created.PasswordHash), []byte(next.Password)) != nil {
 		t.Error("the stored hash does not match the password")
 	}
-	if created.JoinDate.IsZero() {
-		t.Error("join_date is empty, want today by default")
+	if today := time.Now().UTC(); created.JoinDate.Format(time.DateOnly) != today.Format(time.DateOnly) {
+		t.Errorf("join_date = %v, want today, %s, by default", created.JoinDate, today.Format(time.DateOnly))
+	}
+}
+
+// UTC+14 and UTC-11 are 25 hours apart, so a join dated by the server's zone would match at most one of them.
+func TestCreateDatesTheJoinInTheCompanyZone(t *testing.T) {
+	s := newServer(t)
+	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
+
+	for _, name := range []string{"Pacific/Kiritimati", "Pacific/Pago_Pago"} {
+		zone, _ := time.LoadLocation(name)
+		created, err := NewService(s.db, zone).Create(t.Context(), claimsOf(admin), NewUser{
+			Email: unique("joiner") + "@test.local", Password: "eight888", FullName: "Joiner",
+		})
+		if err != nil {
+			t.Fatalf("%s: Create: %v", name, err)
+		}
+		s.track(created)
+		if want := time.Now().In(zone).Format(time.DateOnly); created.JoinDate.Format(time.DateOnly) != want {
+			t.Errorf("%s: join_date = %v, want %s", name, created.JoinDate, want)
+		}
 	}
 }
 
@@ -334,7 +354,7 @@ func TestSubtreeLookupFailureSurfaces(t *testing.T) {
 	s := newServer(t)
 	lead := s.addUser(t, middleware.RoleSupervisor, nil)
 	other := s.addUser(t, middleware.RoleEmployee, nil)
-	svc := &Service{repo: NewRepository(failingDB(t, "users"))}
+	svc := &Service{repo: NewRepository(failingDB(t, "users")), zone: time.UTC}
 
 	_, err := svc.Get(t.Context(), claimsOf(lead), other.ID)
 	if !errors.Is(err, errInjected) {
@@ -452,7 +472,7 @@ func TestTheChecksReportDatabaseFailures(t *testing.T) {
 	employee := s.addUser(t, middleware.RoleEmployee, nil)
 	department := s.addDepartment(t, unique("Faulty"))
 
-	departments := &Service{repo: NewRepository(failingDB(t, "departments"))}
+	departments := &Service{repo: NewRepository(failingDB(t, "departments")), zone: time.UTC}
 	_, err := departments.Create(t.Context(), claimsOf(admin), NewUser{
 		Email: "dept@test.local", Password: "eight888", FullName: "Budi", DepartmentID: &department.ID,
 	})
@@ -460,7 +480,7 @@ func TestTheChecksReportDatabaseFailures(t *testing.T) {
 		t.Errorf("department lookup: err = %v, want the database failure", err)
 	}
 
-	subtree := &Service{repo: NewRepository(failingAfterDB(t, "subordinates"))}
+	subtree := &Service{repo: NewRepository(failingAfterDB(t, "subordinates")), zone: time.UTC}
 	_, err = subtree.Replace(t.Context(), claimsOf(admin), employee.ID, Details{
 		FullName: "Renamed", IsActive: true, ManagerID: &admin.ID,
 	})
@@ -468,7 +488,7 @@ func TestTheChecksReportDatabaseFailures(t *testing.T) {
 		t.Errorf("subtree lookup: err = %v, want the database failure", err)
 	}
 
-	lookups := &Service{repo: NewRepository(failingAfterDB(t, "count("))}
+	lookups := &Service{repo: NewRepository(failingAfterDB(t, "count(")), zone: time.UTC}
 	_, err = lookups.Replace(t.Context(), claimsOf(admin), employee.ID, Details{
 		FullName: "Renamed", IsActive: true, ManagerID: &admin.ID,
 	})
@@ -570,7 +590,7 @@ func TestADefaultScheduleMustBeLive(t *testing.T) {
 		t.Errorf("Replace onto a retired schedule: err = %v, want a ValidationError", err)
 	}
 
-	schedules := &Service{repo: NewRepository(failingDB(t, "work_schedules"))}
+	schedules := &Service{repo: NewRepository(failingDB(t, "work_schedules")), zone: time.UTC}
 	_, err = schedules.Create(t.Context(), claimsOf(admin), NewUser{
 		Email: unique("sched") + "@test.local", Password: "eight888",
 		FullName: "Budi", DefaultScheduleID: &schedule.ID,

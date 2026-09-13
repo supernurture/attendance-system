@@ -24,6 +24,9 @@ import (
 	"attendance-system/internal/middleware"
 )
 
+// testZone is far enough from UTC that a test measuring "today" in the wrong zone fails for 7 hours a day.
+var testZone, _ = time.LoadLocation("Asia/Jakarta")
+
 // Assembled rather than written out, so secret scanners do not read the fixture as a leaked key.
 var testSecret = []byte(strings.Repeat("fixture-", 5))
 
@@ -80,7 +83,7 @@ func newServer(t *testing.T) *server {
 	gin.SetMode(gin.TestMode)
 
 	db := testDB(t)
-	s := &server{db: db, svc: NewService(db), repo: NewRepository(db)}
+	s := &server{db: db, svc: NewService(db, testZone), repo: NewRepository(db)}
 
 	router := gin.New()
 	router.ContextWithFallback = true
@@ -322,7 +325,7 @@ func failingAfterDB(t *testing.T, match string) *gorm.DB {
 // failing is the service against a database where every statement touching match fails.
 func (s *server) failing(t *testing.T, match string) *Service {
 	t.Helper()
-	return &Service{repo: NewRepository(failingDB(t, match))}
+	return NewService(failingDB(t, match), testZone)
 }
 
 // failingRouter serves the module against a database that fails every statement.
@@ -361,9 +364,9 @@ func day(year int, month time.Month, date int) time.Time {
 
 // pastDate and futureDate sit either side of today, which is what decides whether an edit is audited.
 func pastDate(days int) time.Time {
-	return dateOnly(time.Now()).AddDate(0, 0, -days)
+	return dateOnly(time.Now().In(testZone)).AddDate(0, 0, -days)
 }
 
 func futureDate(days int) time.Time {
-	return dateOnly(time.Now()).AddDate(0, 0, days)
+	return dateOnly(time.Now().In(testZone)).AddDate(0, 0, days)
 }

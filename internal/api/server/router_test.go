@@ -90,6 +90,15 @@ func TestNewRouterRejectsBadTrustedProxy(t *testing.T) {
 	}
 }
 
+func TestNewRouterRejectsAnUnknownTimezone(t *testing.T) {
+	cfg := testConfig()
+	cfg.Attendance.Timezone = "Mars/Olympus"
+
+	if _, err := NewRouter(cfg, newTestDeps(t)); err == nil || !strings.Contains(err.Error(), "attendance.timezone") {
+		t.Fatalf("err = %v, want the timezone named", err)
+	}
+}
+
 func TestNewRouterRequiresPostgresAndRedis(t *testing.T) {
 	for _, missing := range []string{"postgres", "redis"} {
 		deps := newTestDeps(t)
@@ -118,7 +127,7 @@ func TestNewRouterRejectsABadSeedAdmin(t *testing.T) {
 func TestProtectedRouteWithoutTokenIs401(t *testing.T) {
 	router := newTestRouter(t, testConfig(), newTestDeps(t))
 
-	for _, path := range []string{"/me", "/users", "/departments"} {
+	for _, path := range []string{"/me", "/users", "/departments", "/attendance/whos-in?date=2030-03-04"} {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusUnauthorized {
