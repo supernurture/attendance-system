@@ -36,12 +36,12 @@ func TestCheckRange(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			span, err := checkRange(test.span)
+			span, err := CheckRange(test.span)
 			if test.bad != apperr.IsValidation(err) {
-				t.Fatalf("checkRange(%v) error = %v, want validation = %v", test.span, err, test.bad)
+				t.Fatalf("CheckRange(%v) error = %v, want validation = %v", test.span, err, test.bad)
 			}
 			if err == nil && (span.From.Hour() != 0 || span.To.Hour() != 0) {
-				t.Errorf("checkRange returned %v, want both ends at midnight", span)
+				t.Errorf("CheckRange returned %v, want both ends at midnight", span)
 			}
 		})
 	}

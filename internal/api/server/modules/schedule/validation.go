@@ -19,9 +19,9 @@ func (r Range) days() int {
 	return int(r.To.Sub(r.From).Hours()/24) + 1
 }
 
-// checkRange refuses a span the database should not be asked for, and returns it as calendar days so
+// CheckRange refuses a span the database should not be asked for, and returns it as calendar days so
 // the count cannot depend on the time of day either end carries.
-func checkRange(span Range) (Range, error) {
+func CheckRange(span Range) (Range, error) {
 	if span.From.IsZero() || span.To.IsZero() {
 		return Range{}, apperr.Invalid("from and to are both required")
 	}

@@ -53,7 +53,7 @@ type Assignment struct {
 // Days applies rule A across a span for one person: the roster first, then their own schedule, with an
 // observed holiday turning either off.
 func (s *Service) Days(ctx context.Context, userID int64, span Range) ([]Day, error) {
-	span, err := checkRange(span)
+	span, err := CheckRange(span)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (s *Service) ListHolidays(ctx context.Context, claims middleware.Claims, sp
 	if !claims.Role.AtLeast(middleware.RoleSupervisor) {
 		return nil, apperr.ErrForbidden
 	}
-	span, err := checkRange(span)
+	span, err := CheckRange(span)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func (s *Service) ListAssignments(
 	if !claims.Role.AtLeast(middleware.RoleHRAdmin) {
 		return nil, apperr.ErrForbidden
 	}
-	span, err := checkRange(span)
+	span, err := CheckRange(span)
 	if err != nil {
 		return nil, err
 	}
