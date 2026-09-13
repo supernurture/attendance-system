@@ -8,11 +8,22 @@ development).
 
 ## Status
 
-Built incrementally in 7 phases — the full plan is in [`docs/plan.md`](docs/plan.md).
-**Phases 0–2 are done** — skeleton, migrations, auth, presigned uploads, and the employee
-directory: users, the manager hierarchy, departments, and role grants recorded in `audit_logs`.
-Live endpoints: `GET /health`, `POST /auth/{login,refresh,logout}`, `GET /me`, `/users` and
-`/users/{id}` (+ `/role`), `/departments` and `/departments/{id}`, `POST /uploads/intent`.
+Built incrementally, one reviewed phase at a time. **Done:** skeleton, migrations, auth, presigned
+uploads, the employee directory (users, the manager hierarchy, departments, role grants in
+`audit_logs`), work schedules and the roster, and attendance: check-in/out with a selfie and GPS,
+the daily report, who's in, and corrections approved up the hierarchy. **Still to come:** leave
+(statutory leave types, balances, approval, attachments) and reports (JSON, CSV, PDF).
+
+Live endpoints, all specified in `api/server/specs/`:
+
+| Area | Endpoints |
+|---|---|
+| Health, auth | `GET /health`, `POST /auth/{login,refresh,logout}` |
+| Directory | `GET /me`, `/users` and `/users/{id}`, `PATCH /users/{id}/role`, `/departments` and `/departments/{id}` |
+| Uploads | `POST /uploads/intent` |
+| Schedules | `GET /me/schedule`, `/work-schedules`, `/holidays`, `/office-locations`, `/shift-assignments` |
+| Attendance | `POST /attendance/{check-in,check-out}`, `GET /attendance/me`, `PUT /attendance/me/daily-report`, `GET /attendance/{id}/photo/{in,out}`, `GET /attendance/whos-in` |
+| Corrections | `POST /attendance/corrections`, `GET /attendance/corrections/{me,pending}`, `DELETE /attendance/corrections/{id}`, `POST /attendance/corrections/{id}/decision` |
 
 Who sees whom follows `manager_id`: a supervisor reaches their own subtree, hr_admin and
 super_admin reach everyone, and only super_admin grants roles.
@@ -63,7 +74,6 @@ internal/middleware/    request id, access log, recovery, timeout, CORS, securit
 internal/pkg/           generic helpers shared only within this module (storage, util)
 pkg/                    wrappers other modules may import
   database, redis, logger
-docs/plan.md            the 7-phase plan
 ```
 
 Adding a module: write `api/server/specs/<name>.yaml`, run `make oapicodegen`, implement the
@@ -72,9 +82,9 @@ generated `StrictServerInterface` in `internal/api/server/modules/<name>/`, then
 
 ## Tests that need services
 
-The `cmd/migrate` and `internal/pkg/storage` tests `t.Skip` automatically when Postgres/MinIO is
-unreachable, so `make check` stays green without anything running. If you moved the compose ports
-via `.env`, tell the tests too:
+Every test that needs Postgres or MinIO (`cmd/migrate`, `internal/pkg/storage`, and the modules)
+`t.Skip`s automatically when it is unreachable, so `make check` stays green without anything
+running. If you moved the compose ports via `.env`, tell the tests too:
 
 ```sh
 POSTGRES_TEST_PORT=5433 make check
@@ -85,6 +95,12 @@ CI sets `POSTGRES_TEST_REQUIRED` and `STORAGE_TEST_REQUIRED` so a skip there bec
 ## Notes
 
 - The schema is owned by goose, not GORM `AutoMigrate`.
-- All timestamps are `timestamptz` UTC; the work date is stored as a separate `date` column.
+- All timestamps are `timestamptz` UTC; the work date is stored as a separate `date` column, so a
+  22:00–06:00 night shift stays one day.
+- `attendance.timezone` (required, e.g. `Asia/Jakarta`) is the zone schedule times and every "today"
+  are read in. `attendance.geofence_enforce: false` only flags a check-in outside every office;
+  `true` refuses it.
+- Attendance is never edited directly: every change after the fact is a correction that someone
+  above the employee approves, and the correction keeps the times it replaced.
 - Files never pass through the server: clients PUT/GET directly to object storage via presigned
   URLs signed by the server.
