@@ -14,13 +14,14 @@ import (
 
 // Config struct defines the structure of the configuration file.
 type Config struct {
-	App       App              `mapstructure:"app"`
-	Server    Server           `mapstructure:"server"`
-	Databases Databases        `mapstructure:"databases"`
-	Redis     map[string]Redis `mapstructure:"redis"   validate:"omitempty,dive"`
-	Storage   Storage          `mapstructure:"storage"`
-	Auth      Auth             `mapstructure:"auth"`
-	Logger    Logger           `mapstructure:"logger"`
+	App        App              `mapstructure:"app"`
+	Server     Server           `mapstructure:"server"`
+	Databases  Databases        `mapstructure:"databases"`
+	Redis      map[string]Redis `mapstructure:"redis"   validate:"omitempty,dive"`
+	Storage    Storage          `mapstructure:"storage"`
+	Auth       Auth             `mapstructure:"auth"`
+	Attendance Attendance       `mapstructure:"attendance"`
+	Logger     Logger           `mapstructure:"logger"`
 }
 
 // Auth holds the JWT signing secret and the optional super_admin created at startup.
@@ -28,6 +29,12 @@ type Auth struct {
 	JWTSecret         string `mapstructure:"jwt_secret"          validate:"required,min=32"`
 	SeedAdminEmail    string `mapstructure:"seed_admin_email"`
 	SeedAdminPassword string `mapstructure:"seed_admin_password"`
+}
+
+// Attendance holds the check-in knobs: the zone schedules are written in, and whether the geofence refuses.
+type Attendance struct {
+	Timezone        string `mapstructure:"timezone"         validate:"required,timezone"`
+	GeofenceEnforce bool   `mapstructure:"geofence_enforce"`
 }
 
 // App holds application identity and environment.

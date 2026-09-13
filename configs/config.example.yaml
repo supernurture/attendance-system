@@ -53,6 +53,10 @@ auth:
   seed_admin_email:
   seed_admin_password:
 
+attendance:
+  timezone: Asia/Jakarta # the zone every schedule's times are read in
+  geofence_enforce: false # true refuses a check-in outside every office; false only flags it
+
 logger:
   path: ./logs
   level: INFO # DEBUG, INFO, WARN, or ERROR

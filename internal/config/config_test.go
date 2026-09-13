@@ -21,6 +21,9 @@ server:
   port: 8080
   timeout: 40s
   trusted_proxies: ["10.0.0.0/8"]
+attendance:
+  timezone: Asia/Jakarta
+  geofence_enforce: true
 logger:
   level: INFO
 `
@@ -135,6 +138,9 @@ func TestLoad(t *testing.T) {
 	if len(cfg.Databases.Postgres) != 0 {
 		t.Errorf("postgres = %v, want it absent", cfg.Databases.Postgres)
 	}
+	if got := cfg.Attendance; got.Timezone != "Asia/Jakarta" || !got.GeofenceEnforce {
+		t.Errorf("attendance = %+v, want Asia/Jakarta with the geofence enforced", got)
+	}
 }
 
 var datastoreConfig = validConfig + `
@@ -246,6 +252,13 @@ func TestLoadErrors(t *testing.T) {
 				configFile(): configWithoutStorage + validAuth + strings.Replace(validStorage, "5m", "169h", 1),
 			},
 			want: "PresignTTL",
+		},
+		{
+			name: "timezone no zone database knows",
+			files: map[string]string{
+				configFile(): strings.Replace(validConfig, "Asia/Jakarta", "Mars/Olympus", 1),
+			},
+			want: "Timezone",
 		},
 		{
 			name: "jwt secret short enough to brute force",

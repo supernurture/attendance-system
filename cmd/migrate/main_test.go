@@ -49,6 +49,8 @@ storage:
   presign_ttl: 5m
 auth:
   jwt_secret: %s
+attendance:
+  timezone: Asia/Jakarta
 databases:
   postgres:
     %s:
