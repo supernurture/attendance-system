@@ -13,6 +13,7 @@ type Status string
 const (
 	StatusPresent Status = "present"
 	StatusLate    Status = "late"
+	StatusOnLeave Status = "on_leave" // approved leave covers the date
 	StatusHoliday Status = "holiday"
 	StatusOff     Status = "off"     // not a working day by rule A
 	StatusNotYet  Status = "not_yet" // a working day whose shift, grace included, has not started

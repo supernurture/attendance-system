@@ -498,11 +498,12 @@ components:
         status:
           type: string
           description: |
-            present or late with an attendance; otherwise holiday, off (not a working day), not_yet (the shift
-            and its grace have not started), or absent.
+            present or late with an attendance; otherwise on_leave (approved leave covers the date), holiday, off
+            (not a working day), not_yet (the shift and its grace have not started), or absent.
           enum:
             - present
             - late
+            - on_leave
             - holiday
             - 'off'
             - not_yet

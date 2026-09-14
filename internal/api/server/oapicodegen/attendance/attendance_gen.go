@@ -65,6 +65,7 @@ const (
 	Late    PresenceStatus = "late"
 	NotYet  PresenceStatus = "not_yet"
 	Off     PresenceStatus = "off"
+	OnLeave PresenceStatus = "on_leave"
 	Present PresenceStatus = "present"
 )
 
@@ -80,6 +81,8 @@ func (e PresenceStatus) Valid() bool {
 	case NotYet:
 		return true
 	case Off:
+		return true
+	case OnLeave:
 		return true
 	case Present:
 		return true
@@ -225,14 +228,14 @@ type Presence struct {
 	DepartmentId *int64      `json:"department_id,omitempty"`
 	FullName     string      `json:"full_name"`
 
-	// Status present or late with an attendance; otherwise holiday, off (not a working day), not_yet (the shift
-	// and its grace have not started), or absent.
+	// Status present or late with an attendance; otherwise on_leave (approved leave covers the date), holiday, off
+	// (not a working day), not_yet (the shift and its grace have not started), or absent.
 	Status PresenceStatus `json:"status"`
 	UserId int64          `json:"user_id"`
 }
 
-// PresenceStatus present or late with an attendance; otherwise holiday, off (not a working day), not_yet (the shift
-// and its grace have not started), or absent.
+// PresenceStatus present or late with an attendance; otherwise on_leave (approved leave covers the date), holiday, off
+// (not a working day), not_yet (the shift and its grace have not started), or absent.
 type PresenceStatus string
 
 // BadRequest defines model for BadRequest.

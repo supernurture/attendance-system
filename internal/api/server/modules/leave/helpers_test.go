@@ -1,4 +1,4 @@
-package attendance
+package leave
 
 import (
 	"bytes"
@@ -20,9 +20,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"attendance-system/internal/api/server/modules/schedule"
 	"attendance-system/internal/api/server/modules/upload"
-	attendancecontract "attendance-system/internal/api/server/oapicodegen/attendance"
+	leavecontract "attendance-system/internal/api/server/oapicodegen/leave"
 	"attendance-system/internal/middleware"
 	"attendance-system/internal/pkg/storage"
 	"attendance-system/pkg/database"
@@ -33,18 +32,14 @@ var testSecret = []byte(strings.Repeat("fixture-", 5))
 
 var jakarta = mustZone("Asia/Jakarta")
 
-// The offices sit far from the ones other packages' tests create, which every check-in here also sees.
-const (
-	officeLat = 10.0
-	officeLng = 20.0
-
-	metersPerDegree = 2 * 3.141592653589793 * earthRadiusM / 360 // along a meridian
-)
-
-// Minimal JPEG: the magic bytes http.DetectContentType looks for.
-var jpeg = append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, bytes.Repeat([]byte("j"), 1000)...)
+// A doctor's note, as far as http.DetectContentType can tell.
+var pdf = append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("p"), 1000)...)
 
 var errInjected = errors.New("injected failure")
+
+// The tests plan in 2031, a year no other package's tests put holidays in: holidays.date is unique for everyone.
+// 2031-03-03 is a Monday.
+const year = 2031
 
 func mustZone(name string) *time.Location {
 	zone, err := time.LoadLocation(name)
@@ -80,7 +75,7 @@ func testDB(t *testing.T) *gorm.DB {
 		}
 		t.Skipf("no postgres reachable (run `docker compose up -d`): %v", err)
 	}
-	if !db.Migrator().HasTable("attendance_corrections") {
+	if !db.Migrator().HasTable("leave_requests") {
 		t.Fatal("postgres is up but not migrated: run `make migrate-up`")
 	}
 
@@ -89,7 +84,7 @@ func testDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func testStore(t *testing.T, ttl time.Duration) *storage.Storage {
+func testStore(t *testing.T) *storage.Storage {
 	t.Helper()
 
 	store, err := storage.New(storage.Config{
@@ -99,7 +94,7 @@ func testStore(t *testing.T, ttl time.Duration) *storage.Storage {
 		AccessKeyID:     envOr("STORAGE_TEST_ACCESS_KEY_ID", "minioadmin"),
 		SecretAccessKey: envOr("STORAGE_TEST_SECRET_ACCESS_KEY", "minioadmin"),
 		ForcePathStyle:  true,
-		PresignTTL:      ttl,
+		PresignTTL:      time.Minute,
 	})
 	if err != nil {
 		if os.Getenv("STORAGE_TEST_REQUIRED") != "" {
@@ -121,7 +116,7 @@ type server struct {
 	userIDs     []int64
 	scheduleIDs []int64
 	holidayIDs  []int64
-	locationIDs []int64
+	typeIDs     []int64
 	keys        []string
 }
 
@@ -130,21 +125,22 @@ func newServer(t *testing.T) *server {
 	gin.SetMode(gin.TestMode)
 
 	db := testDB(t)
-	s := &server{db: db, store: testStore(t, time.Minute)}
-	s.svc = NewService(db, s.store, jakarta, false)
+	s := &server{db: db, store: testStore(t)}
+	s.svc = NewService(db, s.store, jakarta)
 	s.repo = s.svc.repo
 	s.router = routerFor(s.svc)
+	// Pinned, or the rule refusing a past year would fail every 2031 request once the real clock reaches 2032.
+	clockAt(t, time.Date(year, time.January, 15, 9, 0, 0, 0, jakarta))
 
-	// Corrections and attendance point at users, offices and schedules, so they go first.
+	// Requests, quotas and audit entries point at users and types, so they go first.
 	t.Cleanup(func() {
-		s.db.Exec("DELETE FROM attendance_corrections WHERE user_id IN ?", s.userIDs)
-		s.db.Exec("DELETE FROM attendances WHERE user_id IN ?", s.userIDs)
+		s.db.Exec("DELETE FROM audit_logs WHERE actor_id IN ?", s.userIDs)
 		s.db.Exec("DELETE FROM leave_requests WHERE user_id IN ?", s.userIDs)
-		s.db.Exec("DELETE FROM shift_assignments WHERE user_id IN ?", s.userIDs)
+		s.db.Exec("DELETE FROM leave_balances WHERE user_id IN ?", s.userIDs)
 		s.db.Exec("UPDATE users SET manager_id = NULL, default_schedule_id = NULL WHERE id IN ?", s.userIDs)
 		s.db.Exec("DELETE FROM users WHERE id IN ?", s.userIDs)
+		s.db.Exec("DELETE FROM leave_types WHERE id IN ?", s.typeIDs)
 		s.db.Exec("DELETE FROM holidays WHERE id IN ?", s.holidayIDs)
-		s.db.Exec("DELETE FROM office_locations WHERE id IN ?", s.locationIDs)
 		s.db.Exec("DELETE FROM work_schedules WHERE id IN ?", s.scheduleIDs)
 		for _, key := range s.keys {
 			_ = s.store.Delete(context.Background(), key)
@@ -156,21 +152,30 @@ func newServer(t *testing.T) *server {
 func routerFor(svc *Service) *gin.Engine {
 	router := gin.New()
 	router.ContextWithFallback = true
-	attendancecontract.RegisterHandlers(router.Group("", middleware.Auth(testSecret)),
-		attendancecontract.NewStrictHandler(NewHandler(svc), nil))
+	leavecontract.RegisterHandlers(router.Group("", middleware.Auth(testSecret)),
+		leavecontract.NewStrictHandler(NewHandler(svc), nil))
 	return router
 }
 
-// person inserts an employee, since this module only reads users, and removes it afterwards.
-func (s *server) person(t *testing.T, role middleware.Role, managerID, scheduleID *int64) middleware.Claims {
+// person inserts someone who works Monday to Friday, observing public holidays, and removes them afterwards.
+func (s *server) person(t *testing.T, role middleware.Role, managerID *int64) middleware.Claims {
 	t.Helper()
+
+	if len(s.scheduleIDs) == 0 {
+		var id int64
+		err := s.db.Raw(`INSERT INTO work_schedules (name, start_time, end_time, workdays, observes_holidays)
+			VALUES (?, '08:00', '17:00', '{1,2,3,4,5}', true) RETURNING id`, unique("office hours")).Scan(&id).Error
+		if err != nil {
+			t.Fatalf("create work schedule: %v", err)
+		}
+		s.scheduleIDs = append(s.scheduleIDs, id)
+	}
 
 	var id int64
 	err := s.db.Raw(`INSERT INTO users (email, password_hash, full_name, role, join_date, manager_id,
 			default_schedule_id)
-		VALUES (?, 'not used: tests sign their own tokens', ?, ?, '2020-01-01', ?, ?) RETURNING id`,
-		unique("user")+"@test.local", fmt.Sprintf("User %02d", len(s.userIDs)+1), string(role),
-		managerID, scheduleID).Scan(&id).Error
+		VALUES (?, 'not used: tests sign their own tokens', 'Someone', ?, '2020-01-01', ?, ?) RETURNING id`,
+		unique("user")+"@test.local", string(role), managerID, s.scheduleIDs[0]).Scan(&id).Error
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -179,127 +184,93 @@ func (s *server) person(t *testing.T, role middleware.Role, managerID, scheduleI
 	return middleware.Claims{UserID: id, Role: role}
 }
 
-// hours stores a schedule worked every day of the week that ignores public holidays.
-func (s *server) hours(t *testing.T, start, end schedule.Clock, grace int) schedule.WorkSchedule {
-	t.Helper()
-
-	row := schedule.WorkSchedule{
-		Name: unique("schedule"), StartTime: start, EndTime: end, GraceMinutes: grace,
-	}
-	err := s.db.Raw(`INSERT INTO work_schedules (name, start_time, end_time, grace_minutes, workdays,
-			observes_holidays) VALUES (?, ?, ?, ?, '{1,2,3,4,5,6,7}', false) RETURNING id`,
-		row.Name, start, end, grace).Scan(&row.ID).Error
-	if err != nil {
-		t.Fatalf("create work schedule: %v", err)
-	}
-
-	s.scheduleIDs = append(s.scheduleIDs, row.ID)
-	return row
-}
-
-func (s *server) office(t *testing.T, lat, lng float64, radiusM int) int64 {
+func (s *server) holiday(t *testing.T, date time.Time) {
 	t.Helper()
 
 	var id int64
-	err := s.db.Raw(`INSERT INTO office_locations (name, lat, lng, radius_m) VALUES (?, ?, ?, ?) RETURNING id`,
-		unique("office"), lat, lng, radiusM).Scan(&id).Error
-	if err != nil {
-		t.Fatalf("create office location: %v", err)
-	}
-
-	s.locationIDs = append(s.locationIDs, id)
-	return id
-}
-
-func (s *server) holiday(t *testing.T, date time.Time, name string) {
-	t.Helper()
-
-	var id int64
-	if err := s.db.Raw(`INSERT INTO holidays (date, name) VALUES (?, ?) RETURNING id`, date, name).
+	if err := s.db.Raw(`INSERT INTO holidays (date, name) VALUES (?, 'Hari Raya') RETURNING id`, date).
 		Scan(&id).Error; err != nil {
 		t.Fatalf("create holiday: %v", err)
 	}
 	s.holidayIDs = append(s.holidayIDs, id)
 }
 
-func (s *server) rostered(t *testing.T, userID int64, date time.Time, scheduleID *int64) {
+// kind stores a leave type of the test's own under a unique code, so the seeded ones stay untouched.
+func (s *server) kind(t *testing.T, kind LeaveType) LeaveType {
 	t.Helper()
 
-	if err := s.db.Exec(`INSERT INTO shift_assignments (user_id, work_date, schedule_id) VALUES (?, ?, ?)`,
-		userID, date, scheduleID).Error; err != nil {
-		t.Fatalf("create shift assignment: %v", err)
+	kind.Code = strings.ReplaceAll(unique("test"), "-", "_")
+	if err := s.repo.CreateType(t.Context(), &kind); err != nil {
+		t.Fatalf("create leave type: %v", err)
 	}
+	s.typeIDs = append(s.typeIDs, kind.ID)
+	return kind
 }
 
-// selfie uploads a JPEG the way a phone would, intent then PUT, and returns its key.
-func (s *server) selfie(t *testing.T, userID int64) string {
+// seeded is one of the statutory types the migration inserts; tests only read them.
+func (s *server) seeded(t *testing.T, code string) LeaveType {
 	t.Helper()
 
-	intent, err := upload.NewService(s.store).Intent(t.Context(), userID, upload.AttendancePhoto, "image/jpeg",
-		int64(len(jpeg)))
+	kind, err := s.repo.TypeByCode(t.Context(), code)
+	if err != nil {
+		t.Fatalf("seeded leave type %s: %v", code, err)
+	}
+	return kind
+}
+
+// attachment uploads a PDF the way a phone would, intent then PUT, and returns its key.
+func (s *server) attachment(t *testing.T, userID int64) string {
+	t.Helper()
+
+	intent, err := upload.NewService(s.store).Intent(t.Context(), userID, upload.LeaveAttachment, "application/pdf",
+		int64(len(pdf)))
 	if err != nil {
 		t.Fatalf("upload intent: %v", err)
 	}
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, intent.URL, bytes.NewReader(jpeg))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, intent.URL, bytes.NewReader(pdf))
 	for name, value := range intent.Headers {
 		req.Header.Set(name, value)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("PUT selfie: %v", err)
+		t.Fatalf("PUT attachment: %v", err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT selfie status = %d", resp.StatusCode)
+		t.Fatalf("PUT attachment status = %d", resp.StatusCode)
 	}
 
 	s.keys = append(s.keys, intent.Key)
 	return intent.Key
 }
 
-// mark is a check-in or check-out at the test office, meters north of its center, with a fresh selfie.
-func (s *server) mark(t *testing.T, userID int64, metersNorth float64) Mark {
-	t.Helper()
-	return Mark{PhotoKey: s.selfie(t, userID), Lat: officeLat + metersNorth/metersPerDegree, Lng: officeLng,
-		AccuracyM: 8}
-}
-
-// checkedIn stores an attendance directly, with evidence, for tests that are not about checking in.
-func (s *server) checkedIn(t *testing.T, userID int64, date, at time.Time, scheduleID *int64) Attendance {
+// file requests leave through the service and fails the test when it is refused.
+func (s *server) file(t *testing.T, userID int64, code string, from, to time.Time, key *string) Leave {
 	t.Helper()
 
-	lat, lng, accuracy, within, mock := officeLat, officeLng, 5.0, true, false
-	key := s.selfie(t, userID)
-	row := Attendance{UserID: userID, WorkDate: date, ScheduleID: scheduleID, CheckInAt: at, CheckIn: Evidence{
-		Lat: &lat, Lng: &lng, AccuracyM: &accuracy, PhotoKey: &key, WithinGeofence: &within, MockLocation: &mock,
-	}}
-	if err := s.repo.Create(t.Context(), &row); err != nil {
-		t.Fatalf("create attendance: %v", err)
+	row, err := s.svc.Request(t.Context(), userID, Filing{Type: code, StartDate: from, EndDate: to,
+		Reason: "family matters", AttachmentKey: key})
+	if err != nil {
+		t.Fatalf("request %s leave %s to %s: %v", code, day(from), day(to), err)
 	}
 	return row
 }
 
-// onLeave stores a leave request directly, in the status given.
-func (s *server) onLeave(t *testing.T, userID int64, from, to time.Time, status string) {
+// balance is the person's balance of one type in the test year.
+func (s *server) balance(t *testing.T, userID, typeID int64) Balance {
 	t.Helper()
 
-	if err := s.db.Exec(`INSERT INTO leave_requests (user_id, leave_type_id, start_date, end_date, working_days,
-			reason, status) SELECT ?, id, ?, ?, 1, 'away', ? FROM leave_types WHERE code = 'annual'`,
-		userID, from, to, status).Error; err != nil {
-		t.Fatalf("create leave request: %v", err)
+	balances, err := s.repo.Balances(t.Context(), userID, year)
+	if err != nil {
+		t.Fatalf("Balances: %v", err)
 	}
-}
-
-// fileCorrection stores a pending correction directly.
-func (s *server) fileCorrection(t *testing.T, userID int64, date time.Time, in, out *time.Time) Correction {
-	t.Helper()
-
-	correction := Correction{UserID: userID, WorkDate: date, RequestedBy: userID, ProposedCheckInAt: in,
-		ProposedCheckOutAt: out, Reason: "forgot", Status: correctionPending}
-	if err := s.repo.CreateCorrection(t.Context(), &correction); err != nil {
-		t.Fatalf("create correction: %v", err)
+	for _, balance := range balances {
+		if balance.LeaveTypeID == typeID {
+			return balance
+		}
 	}
-	return correction
+	t.Fatalf("no balance for type %d in %+v", typeID, balances)
+	return Balance{}
 }
 
 // clockAt pins now() to a moment for the rest of the test.
@@ -351,13 +322,7 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder, want int) T {
 // failing is the service against a database where every statement touching match fails before it runs.
 func (s *server) failing(t *testing.T, match string) *Service {
 	t.Helper()
-	return NewService(failingDB(t, match), s.store, jakarta, false)
-}
-
-// failingAfter fails only the statements whose built SQL contains match, so one query can be singled out.
-func (s *server) failingAfter(t *testing.T, match string) *Service {
-	t.Helper()
-	return NewService(failingAfterDB(t, match), s.store, jakarta, false)
+	return NewService(failingDB(t, match), s.store, jakarta)
 }
 
 // failingDB is a fresh handle on the test database where every statement touching match fails before it runs,
@@ -387,7 +352,7 @@ func failingDB(t *testing.T, match string) *gorm.DB {
 	return db
 }
 
-// failingAfterDB fails the statements whose SQL contains match, hooked after the SQL is built.
+// failingAfterDB fails the statements whose built SQL contains match, so one query can be singled out.
 func failingAfterDB(t *testing.T, match string) *gorm.DB {
 	t.Helper()
 
@@ -401,6 +366,7 @@ func failingAfterDB(t *testing.T, match string) *gorm.DB {
 	for _, err := range []error{
 		callbacks.Query().After("gorm:query").Register("test:fail-after", fail),
 		callbacks.Row().After("gorm:row").Register("test:fail-after", fail),
+		callbacks.Raw().After("gorm:raw").Register("test:fail-after", fail),
 		callbacks.Create().After("gorm:create").Register("test:fail-after", fail),
 		callbacks.Update().After("gorm:update").Register("test:fail-after", fail),
 	} {
@@ -416,26 +382,13 @@ func unique(prefix string) string {
 	return prefix + "-" + strings.ToLower(rand.Text())
 }
 
-func date(year int, month time.Month, day int) time.Time {
+func date(month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
-}
-
-// local is a wall-clock moment in Jakarta, the zone the tests' schedules are read in.
-func local(year int, month time.Month, day, hour, minute int) time.Time {
-	return time.Date(year, month, day, hour, minute, 0, 0, jakarta)
 }
 
 func ptr[T any](value T) *T { return &value }
 
-// sameID reports whether an optional id is want, where 0 stands for none.
-func sameID(got *int64, want int64) bool {
-	if got == nil {
-		return want == 0
-	}
-	return *got == want
-}
-
 // neverPut is a well-formed key under the user's prefix that nothing was uploaded to.
 func neverPut(userID int64) string {
-	return fmt.Sprintf("attendance/%d/00000000-0000-0000-0000-000000000000.jpg", userID)
+	return fmt.Sprintf("leave/%d/00000000-0000-0000-0000-000000000000.pdf", userID)
 }

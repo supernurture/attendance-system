@@ -161,6 +161,18 @@ func (r *Repository) OnDate(ctx context.Context, managerID *int64, date time.Tim
 	return rows, query.Find(&rows).Error
 }
 
+// OnLeave returns who is on approved leave on a date: anyone, or only those below managerID when given.
+func (r *Repository) OnLeave(ctx context.Context, managerID *int64, date time.Time) ([]int64, error) {
+	query := r.db.WithContext(ctx).Table("leave_requests").
+		Where("status = 'approved' AND ? BETWEEN start_date AND end_date", date)
+	if managerID != nil {
+		query = query.Where("user_id IN (?)", r.db.Raw(user.SubtreeQuery, *managerID))
+	}
+
+	var ids []int64
+	return ids, query.Pluck("user_id", &ids).Error
+}
+
 // ByID fails with apperr.ErrNotFound when no attendance has that id.
 func (r *Repository) ByID(ctx context.Context, id int64) (Attendance, error) {
 	var row Attendance

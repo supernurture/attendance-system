@@ -27,6 +27,8 @@ func TestWhosIn(t *testing.T) {
 	onHoliday := s.person(t, middleware.RoleEmployee, &lead.UserID, &observing.ID)
 	rosteredOff := s.person(t, middleware.RoleEmployee, &lead.UserID, &day.ID)
 	unscheduled := s.person(t, middleware.RoleEmployee, &lead.UserID, nil)
+	vacationing := s.person(t, middleware.RoleEmployee, &lead.UserID, &observing.ID)
+	awaiting := s.person(t, middleware.RoleEmployee, &lead.UserID, &day.ID)
 	outsider := s.person(t, middleware.RoleEmployee, nil, &day.ID)
 
 	// Neither the inactive nor someone who joins later is expected in.
@@ -39,6 +41,8 @@ func TestWhosIn(t *testing.T) {
 	lateRow := s.checkedIn(t, late.UserID, today, local(2030, time.March, 6, 9, 0), &day.ID)
 	s.db.Exec("UPDATE attendances SET late_minutes = 45 WHERE id = ?", lateRow.ID)
 	s.rostered(t, rosteredOff.UserID, today, nil)
+	s.onLeave(t, vacationing.UserID, today.AddDate(0, 0, -1), today, "approved")
+	s.onLeave(t, awaiting.UserID, today, today, "pending")
 
 	clockAt(t, local(2030, time.March, 6, 10, 0))
 	presences, err := s.svc.WhosIn(t.Context(), lead, today)
@@ -54,6 +58,8 @@ func TestWhosIn(t *testing.T) {
 		onHoliday.UserID:   StatusHoliday,
 		rosteredOff.UserID: StatusHoliday, // rule B: a holiday outranks a day off
 		unscheduled.UserID: StatusHoliday,
+		vacationing.UserID: StatusOnLeave, // rule B: leave outranks the holiday
+		awaiting.UserID:    StatusAbsent,  // pending leave does not excuse the day
 	}
 	got := map[int64]Presence{}
 	for _, presence := range presences {
@@ -108,7 +114,8 @@ func TestWhosInFaults(t *testing.T) {
 	lead := s.person(t, middleware.RoleSupervisor, nil, nil)
 	s.person(t, middleware.RoleEmployee, &lead.UserID, &hours.ID)
 
-	for _, table := range []string{"users", "attendances", "shift_assignments", "holidays", "work_schedules"} {
+	tables := []string{"users", "attendances", "leave_requests", "shift_assignments", "holidays", "work_schedules"}
+	for _, table := range tables {
 		if _, err := s.failing(t, table).WhosIn(t.Context(), lead, date(2030, 3, 7)); !errors.Is(err, errInjected) {
 			t.Errorf("%s failing: err = %v, want the injected failure", table, err)
 		}

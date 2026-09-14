@@ -34,6 +34,10 @@ func (s *Service) WhosIn(ctx context.Context, claims middleware.Claims, date tim
 	if err != nil {
 		return nil, err
 	}
+	leaving, err := s.repo.OnLeave(ctx, scope(claims), date)
+	if err != nil {
+		return nil, err
+	}
 
 	span := schedule.Range{From: date, To: date}
 	roster, err := s.roster.ListAssignments(ctx, span, nil)
@@ -45,6 +49,10 @@ func (s *Service) WhosIn(ctx context.Context, claims middleware.Claims, date tim
 		return nil, err
 	}
 
+	onLeave := make(map[int64]bool, len(leaving))
+	for _, id := range leaving {
+		onLeave[id] = true
+	}
 	attended := make(map[int64]Attendance, len(rows))
 	for _, row := range rows {
 		attended[row.UserID] = row
@@ -76,6 +84,8 @@ func (s *Service) WhosIn(ctx context.Context, claims middleware.Claims, date tim
 			if row.LateMinutes > 0 {
 				presence.Status = StatusLate
 			}
+		} else if onLeave[member.ID] {
+			presence.Status = StatusOnLeave
 		} else {
 			in := schedule.Inputs{Default: pick(schedules, member.DefaultScheduleID), Holiday: holiday}
 			if assignment, ok := assigned[member.ID]; ok {
@@ -88,8 +98,8 @@ func (s *Service) WhosIn(ctx context.Context, claims middleware.Claims, date tim
 	return presences, nil
 }
 
-// standing is rule B for a day with no attendance; leave joins it in phase 5. A working day counts as absent only
-// once its shift and grace have started.
+// standing is rule B for a day with neither attendance nor approved leave. A working day counts as absent only once
+// its shift and grace have started.
 func standing(day schedule.Day, at time.Time, zone *time.Location) Status {
 	switch {
 	case !day.Working && day.Holiday != "":
