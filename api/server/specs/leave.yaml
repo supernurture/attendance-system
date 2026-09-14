@@ -1,0 +1,612 @@
+openapi: 3.0.3
+info:
+  title: Leave API
+  description: |
+    Leave requests with approval up the hierarchy, statutory leave types, and yearly quotas. Every type keeps its
+    own balance: special leave never reduces annual leave (Article 93 of the Manpower Act). Days used are summed
+    from the requests themselves, never stored, so rejecting or cancelling a request gives its days back.
+  version: 1.0.0
+tags:
+  - name: leave
+  - name: leave-type
+security:
+  - bearerAuth: []
+paths:
+  /leaves:
+    post:
+      operationId: requestLeave
+      tags:
+        - leave
+      summary: Request leave
+      description: |
+        working_days counts the caller's working days in the range by their schedule and roster, so weekends,
+        days off and observed holidays are free. A type with a yearly quota refuses more than its balance, pending
+        requests included, a range spanning two years, and a start in a year already past. An attachment is
+        uploaded first through POST /uploads/intent with purpose leave_attachment. A type that auto-approves is
+        approved on filing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveRequest'
+      responses:
+        '201':
+          description: Filed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leave'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /leaves/me:
+    get:
+      operationId: listMyLeaves
+      tags:
+        - leave
+      summary: List the caller's leave requests
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Leave'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /leaves/me/balance:
+    get:
+      operationId: getMyLeaveBalance
+      tags:
+        - leave
+      summary: The caller's balance for every type with a yearly quota
+      parameters:
+        - name: year
+          in: query
+          required: false
+          description: Defaults to the current year.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: One entry per type, by code.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Balance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /leaves/pending:
+    get:
+      operationId: listPendingLeaves
+      tags:
+        - leave
+      summary: List leave requests waiting for the caller's decision
+      description: supervisor for everyone below them, hr_admin for everyone; never the caller's own.
+      responses:
+        '200':
+          description: Oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Leave'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /leaves/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      operationId: cancelLeave
+      tags:
+        - leave
+      summary: Withdraw a pending or approved leave request
+      description: |
+        Its owner, until approved leave has started; hr_admin for anyone else at any time. Its days are free again at
+        once. A rejected or cancelled request cannot be cancelled.
+      responses:
+        '204':
+          description: Cancelled.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /leaves/{id}/decision:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: decideLeave
+      tags:
+        - leave
+      summary: Approve or reject a pending leave request
+      description: A supervisor above the employee, or hr_admin; never for oneself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+      responses:
+        '200':
+          description: Decided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leave'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /leaves/{id}/attachment:
+    get:
+      operationId: getLeaveAttachment
+      tags:
+        - leave
+      summary: Redirect to a leave request's attachment
+      description: |
+        The owner, a supervisor above them, or hr_admin: a doctor's note is health data. The redirect is a
+        presigned URL that anyone holding it can open until it expires.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '302':
+          description: The attachment's presigned URL.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /leave-types:
+    get:
+      operationId: listLeaveTypes
+      tags:
+        - leave-type
+      summary: List the leave types
+      description: Anyone signed in, so an employee can pick one.
+      responses:
+        '200':
+          description: By code.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LeaveType'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createLeaveType
+      tags:
+        - leave-type
+      summary: Add a leave type
+      description: hr_admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveTypeRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveType'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /leave-types/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      operationId: updateLeaveType
+      tags:
+        - leave-type
+      summary: Replace a leave type
+      description: |
+        hr_admin only, and every field is replaced. Changing quota_days_per_year is written to audit_logs: it is
+        the quota of everyone without a quota of their own.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveTypeRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveType'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteLeaveType
+      tags:
+        - leave-type
+      summary: Remove a leave type
+      description: hr_admin only. The row is kept with deleted_at set, so past requests still read back.
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /leave-balances:
+    post:
+      operationId: setLeaveQuota
+      tags:
+        - leave-type
+      summary: Set one person's quota for a type and year
+      description: |
+        hr_admin only, never for oneself, and only for a type with a yearly quota; replaces what that person had for
+        the year, and is written to audit_logs. Without one, a person's quota is the type's quota_days_per_year.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuotaRequest'
+      responses:
+        '200':
+          description: Set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quota'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: The request breaks a rule; the message says which.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid access token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller's role or hierarchy does not reach this, or the upload key is someone else's.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such record.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: |
+        The dates overlap another pending or approved request, the request is no longer pending, or the code is
+        taken.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    LeaveRequest:
+      type: object
+      required:
+        - type
+        - start_date
+        - end_date
+        - reason
+      properties:
+        type:
+          type: string
+          description: A leave type's code.
+          example: annual
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+          description: Inclusive, and at most 366 days after start_date.
+        reason:
+          type: string
+          description: At most 500 characters.
+        attachment_key:
+          type: string
+          description: The key POST /uploads/intent returned, already uploaded.
+    Leave:
+      type: object
+      required:
+        - id
+        - user_id
+        - leave_type_id
+        - start_date
+        - end_date
+        - working_days
+        - reason
+        - status
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        leave_type_id:
+          type: integer
+          format: int64
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        working_days:
+          type: integer
+          description: The working days in the range when it was filed.
+        reason:
+          type: string
+        attachment_mime:
+          type: string
+          description: The attachment's sniffed type; absent when there is none.
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+            - cancelled
+        reviewed_by:
+          type: integer
+          format: int64
+          description: Absent when undecided, or approved on filing by a type that auto-approves.
+        reviewed_at:
+          type: string
+          format: date-time
+        review_note:
+          type: string
+        cancelled_by:
+          type: integer
+          format: int64
+          description: Who withdrew it, when cancelled.
+        cancelled_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    Balance:
+      type: object
+      required:
+        - leave_type_id
+        - code
+        - name
+        - year
+        - quota_days
+        - carried_over_days
+        - used_days
+        - pending_days
+        - remaining_days
+      properties:
+        leave_type_id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        year:
+          type: integer
+        quota_days:
+          type: integer
+        carried_over_days:
+          type: integer
+        used_days:
+          type: integer
+          description: Approved requests starting that year.
+        pending_days:
+          type: integer
+          description: Pending requests starting that year; already held against the balance.
+        remaining_days:
+          type: integer
+          description: quota_days + carried_over_days - used_days - pending_days.
+    DecisionRequest:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          type: string
+          enum:
+            - approve
+            - reject
+        note:
+          type: string
+          description: At most 500 characters.
+    LeaveTypeRequest:
+      type: object
+      required:
+        - code
+        - name
+        - is_paid
+        - auto_approve
+      properties:
+        code:
+          type: string
+          description: Lowercase letters, digits and underscores, starting with a letter; at most 50 characters.
+          example: annual
+        name:
+          type: string
+          example: Cuti Tahunan
+        quota_days_per_year:
+          type: integer
+          description: 0 to 366; absent for a type with no yearly quota.
+        max_working_days_per_request:
+          type: integer
+          description: 1 to 366; absent for no cap.
+        attachment_required_from_days:
+          type: integer
+          description: An attachment is required from this many working days on; absent for never.
+        is_paid:
+          type: boolean
+        auto_approve:
+          type: boolean
+    LeaveType:
+      type: object
+      required:
+        - id
+        - code
+        - name
+        - is_paid
+        - auto_approve
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        quota_days_per_year:
+          type: integer
+        max_working_days_per_request:
+          type: integer
+        attachment_required_from_days:
+          type: integer
+        is_paid:
+          type: boolean
+        auto_approve:
+          type: boolean
+    QuotaRequest:
+      type: object
+      required:
+        - user_id
+        - leave_type_id
+        - year
+        - quota_days
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        leave_type_id:
+          type: integer
+          format: int64
+        year:
+          type: integer
+        quota_days:
+          type: integer
+          description: 0 to 366.
+        carried_over_days:
+          type: integer
+          description: 0 to 366. Left out, the person keeps the carried-over days they have, 0 when none.
+    Quota:
+      type: object
+      required:
+        - user_id
+        - leave_type_id
+        - year
+        - quota_days
+        - carried_over_days
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        leave_type_id:
+          type: integer
+          format: int64
+        year:
+          type: integer
+        quota_days:
+          type: integer
+        carried_over_days:
+          type: integer
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
