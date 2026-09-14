@@ -139,6 +139,7 @@ func newServer(t *testing.T) *server {
 	t.Cleanup(func() {
 		s.db.Exec("DELETE FROM attendance_corrections WHERE user_id IN ?", s.userIDs)
 		s.db.Exec("DELETE FROM attendances WHERE user_id IN ?", s.userIDs)
+		s.db.Exec("DELETE FROM leave_requests WHERE user_id IN ?", s.userIDs)
 		s.db.Exec("DELETE FROM shift_assignments WHERE user_id IN ?", s.userIDs)
 		s.db.Exec("UPDATE users SET manager_id = NULL, default_schedule_id = NULL WHERE id IN ?", s.userIDs)
 		s.db.Exec("DELETE FROM users WHERE id IN ?", s.userIDs)
@@ -276,6 +277,17 @@ func (s *server) checkedIn(t *testing.T, userID int64, date, at time.Time, sched
 		t.Fatalf("create attendance: %v", err)
 	}
 	return row
+}
+
+// onLeave stores a leave request directly, in the status given.
+func (s *server) onLeave(t *testing.T, userID int64, from, to time.Time, status string) {
+	t.Helper()
+
+	if err := s.db.Exec(`INSERT INTO leave_requests (user_id, leave_type_id, start_date, end_date, working_days,
+			reason, status) SELECT ?, id, ?, ?, 1, 'away', ? FROM leave_types WHERE code = 'annual'`,
+		userID, from, to, status).Error; err != nil {
+		t.Fatalf("create leave request: %v", err)
+	}
 }
 
 // fileCorrection stores a pending correction directly.
