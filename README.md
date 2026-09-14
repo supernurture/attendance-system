@@ -10,9 +10,10 @@ development).
 
 Built incrementally, one reviewed phase at a time. **Done:** skeleton, migrations, auth, presigned
 uploads, the employee directory (users, the manager hierarchy, departments, role grants in
-`audit_logs`), work schedules and the roster, and attendance: check-in/out with a selfie and GPS,
-the daily report, who's in, and corrections approved up the hierarchy. **Still to come:** leave
-(statutory leave types, balances, approval, attachments) and reports (JSON, CSV, PDF).
+`audit_logs`), work schedules and the roster, attendance (check-in/out with a selfie and GPS, the
+daily report, who's in, and corrections approved up the hierarchy), and leave: the 11 statutory
+leave types, yearly quotas, approval up the hierarchy, and attachments. **Still to come:** reports
+(JSON, CSV, PDF).
 
 Live endpoints, all specified in `api/server/specs/`:
 
@@ -24,6 +25,7 @@ Live endpoints, all specified in `api/server/specs/`:
 | Schedules | `GET /me/schedule`, `/work-schedules`, `/holidays`, `/office-locations`, `/shift-assignments` |
 | Attendance | `POST /attendance/{check-in,check-out}`, `GET /attendance/me`, `PUT /attendance/me/daily-report`, `GET /attendance/{id}/photo/{in,out}`, `GET /attendance/whos-in` |
 | Corrections | `POST /attendance/corrections`, `GET /attendance/corrections/{me,pending}`, `DELETE /attendance/corrections/{id}`, `POST /attendance/corrections/{id}/decision` |
+| Leave | `POST /leaves`, `GET /leaves/{me,pending}`, `GET /leaves/me/balance`, `DELETE /leaves/{id}`, `POST /leaves/{id}/decision`, `GET /leaves/{id}/attachment`, `/leave-types` and `/leave-types/{id}`, `POST /leave-balances` |
 
 Who sees whom follows `manager_id`: a supervisor reaches their own subtree, hr_admin and
 super_admin reach everyone, and only super_admin grants roles.
@@ -104,3 +106,6 @@ CI sets `POSTGRES_TEST_REQUIRED` and `STORAGE_TEST_REQUIRED` so a skip there bec
   above the employee approves, and the correction keeps the times it replaced.
 - Files never pass through the server: clients PUT/GET directly to object storage via presigned
   URLs signed by the server.
+- Every leave type keeps its own balance, summed from the requests themselves and never stored, so
+  special leave never reduces annual leave (Article 93 of the Manpower Act) and a rejected or
+  cancelled request gives its days back. Only working days count, by the employee's own schedule.
