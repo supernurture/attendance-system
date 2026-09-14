@@ -11,12 +11,14 @@ import (
 	"attendance-system/internal/api/server/modules/attendance"
 	"attendance-system/internal/api/server/modules/auth"
 	"attendance-system/internal/api/server/modules/health"
+	"attendance-system/internal/api/server/modules/leave"
 	"attendance-system/internal/api/server/modules/schedule"
 	"attendance-system/internal/api/server/modules/upload"
 	"attendance-system/internal/api/server/modules/user"
 	attendancecontract "attendance-system/internal/api/server/oapicodegen/attendance"
 	authcontract "attendance-system/internal/api/server/oapicodegen/auth"
 	healthcontract "attendance-system/internal/api/server/oapicodegen/health"
+	leavecontract "attendance-system/internal/api/server/oapicodegen/leave"
 	schedulecontract "attendance-system/internal/api/server/oapicodegen/schedule"
 	uploadcontract "attendance-system/internal/api/server/oapicodegen/upload"
 	usercontract "attendance-system/internal/api/server/oapicodegen/user"
@@ -90,6 +92,9 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 		attendance.NewService(db, deps.Storage, zone, cfg.Attendance.GeofenceEnforce))
 	attendancecontract.RegisterHandlers(protected,
 		attendancecontract.NewStrictHandlerWithOptions(attendanceHandler, nil, attendanceOptions))
+	leaveHandler := leave.NewHandler(leave.NewService(db, deps.Storage, zone))
+	leavecontract.RegisterHandlers(protected,
+		leavecontract.NewStrictHandlerWithOptions(leaveHandler, nil, leaveOptions))
 	return nil
 }
 
@@ -120,6 +125,9 @@ var (
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 	attendanceOptions = attendancecontract.StrictGinServerOptions{
+		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
+	}
+	leaveOptions = leavecontract.StrictGinServerOptions{
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 )
