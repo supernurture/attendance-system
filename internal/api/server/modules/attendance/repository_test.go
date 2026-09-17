@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 
+	"attendance-system/internal/api/server/modules/schedule"
 	"attendance-system/internal/middleware"
 	"attendance-system/internal/pkg/apperr"
 )
@@ -110,7 +111,7 @@ func TestApproveRepository(t *testing.T) {
 	}
 }
 
-func TestOnDateAndPeople(t *testing.T) {
+func TestWithinAndPeople(t *testing.T) {
 	s := newServer(t)
 	lead := s.person(t, middleware.RoleSupervisor, nil, nil)
 	employee := s.person(t, middleware.RoleEmployee, &lead.UserID, nil)
@@ -118,13 +119,14 @@ func TestOnDateAndPeople(t *testing.T) {
 
 	s.checkedIn(t, lead.UserID, date(2030, 3, 4), local(2030, 3, 4, 8, 0), nil)
 
-	rows, err := s.repo.OnDate(t.Context(), &lead.UserID, date(2030, 3, 4))
+	span := schedule.Range{From: date(2030, 3, 4), To: date(2030, 3, 4)}
+	rows, err := s.repo.Within(t.Context(), &lead.UserID, span)
 	if err != nil || len(rows) != 1 || rows[0].UserID != employee.UserID {
-		t.Errorf("OnDate below the lead = %+v, %v; want only their report, not the lead", rows, err)
+		t.Errorf("Within below the lead = %+v, %v; want only their report, not the lead", rows, err)
 	}
-	everyone, err := s.repo.OnDate(t.Context(), nil, date(2030, 3, 4))
+	everyone, err := s.repo.Within(t.Context(), nil, span)
 	if err != nil || !attends(everyone, employee.UserID) || !attends(everyone, lead.UserID) {
-		t.Errorf("OnDate for everyone = %+v, %v; want both", everyone, err)
+		t.Errorf("Within for everyone = %+v, %v; want both", everyone, err)
 	}
 
 	people, err := s.repo.People(t.Context(), &lead.UserID, date(2030, 3, 4))

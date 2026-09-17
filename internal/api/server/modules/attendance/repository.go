@@ -70,15 +70,26 @@ type Correction struct {
 
 func (Correction) TableName() string { return "attendance_corrections" }
 
-// person is the part of users whos-in lists.
+// person is the part of users whos-in and the daily statuses list.
 type person struct {
 	ID                int64
 	FullName          string
 	DepartmentID      *int64
 	DefaultScheduleID *int64
+	JoinDate          time.Time
+	DeletedAt         *time.Time
 }
 
 func (person) TableName() string { return "users" }
+
+// leave is the part of an approved leave request rule B needs.
+type leave struct {
+	UserID    int64
+	StartDate time.Time
+	EndDate   time.Time
+}
+
+func (leave) TableName() string { return "leave_requests" }
 
 // presignGet is a seam: presigning with static credentials never fails, so only a test can make it.
 var presignGet = (*storage.Storage).PresignGet
@@ -149,10 +160,10 @@ func (r *Repository) ListByUser(ctx context.Context, userID int64, span schedule
 	return rows, err
 }
 
-// OnDate returns the attendance on one work date: everyone's, or only below managerID when given. The scope is a
+// Within returns the attendance over a span: everyone's, or only below managerID when given. The scope is a
 // subquery, not a list of ids, so a large company cannot run past the 65535 parameters Postgres takes.
-func (r *Repository) OnDate(ctx context.Context, managerID *int64, date time.Time) ([]Attendance, error) {
-	query := r.db.WithContext(ctx).Where("work_date = ?", date)
+func (r *Repository) Within(ctx context.Context, managerID *int64, span schedule.Range) ([]Attendance, error) {
+	query := r.db.WithContext(ctx).Where("work_date BETWEEN ? AND ?", span.From, span.To)
 	if managerID != nil {
 		query = query.Where("user_id IN (?)", r.db.Raw(user.SubtreeQuery, *managerID))
 	}
@@ -161,16 +172,16 @@ func (r *Repository) OnDate(ctx context.Context, managerID *int64, date time.Tim
 	return rows, query.Find(&rows).Error
 }
 
-// OnLeave returns who is on approved leave on a date: anyone, or only those below managerID when given.
-func (r *Repository) OnLeave(ctx context.Context, managerID *int64, date time.Time) ([]int64, error) {
-	query := r.db.WithContext(ctx).Table("leave_requests").
-		Where("status = 'approved' AND ? BETWEEN start_date AND end_date", date)
+// LeaveWithin returns the approved leave overlapping a span: anyone's, or only below managerID when given.
+func (r *Repository) LeaveWithin(ctx context.Context, managerID *int64, span schedule.Range) ([]leave, error) {
+	query := r.db.WithContext(ctx).
+		Where("status = 'approved' AND start_date <= ? AND end_date >= ?", span.To, span.From)
 	if managerID != nil {
 		query = query.Where("user_id IN (?)", r.db.Raw(user.SubtreeQuery, *managerID))
 	}
 
-	var ids []int64
-	return ids, query.Pluck("user_id", &ids).Error
+	var leaves []leave
+	return leaves, query.Find(&leaves).Error
 }
 
 // ByID fails with apperr.ErrNotFound when no attendance has that id.
@@ -219,6 +230,28 @@ func (r *Repository) People(ctx context.Context, managerID *int64, date time.Tim
 	query := r.db.WithContext(ctx).Where("deleted_at IS NULL AND is_active AND join_date <= ?", date)
 	if managerID != nil {
 		query = query.Where("id IN (?)", r.db.Raw(user.SubtreeQuery, *managerID))
+	}
+
+	var people []person
+	return people, query.Order("full_name, id").Find(&people).Error
+}
+
+// Staff lists who was employed at any point of a span, by name, whether still active or not: everyone, or those
+// below managerID when given, narrowed by filter.
+func (r *Repository) Staff(
+	ctx context.Context, managerID *int64, span schedule.Range, filter Filter,
+) ([]person, error) {
+	// A day early: deleted_at is a moment, span.From a date in a zone less than a day from UTC.
+	query := r.db.WithContext(ctx).Where("join_date <= ? AND (deleted_at IS NULL OR deleted_at >= ?)",
+		span.To, span.From.AddDate(0, 0, -1))
+	if managerID != nil {
+		query = query.Where("id IN (?)", r.db.Raw(user.SubtreeQuery, *managerID))
+	}
+	if filter.UserID != nil {
+		query = query.Where("id = ?", *filter.UserID)
+	}
+	if filter.DepartmentID != nil {
+		query = query.Where("department_id = ?", *filter.DepartmentID)
 	}
 
 	var people []person
