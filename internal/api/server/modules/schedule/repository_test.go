@@ -476,6 +476,15 @@ func TestRepositorySchedulesByID(t *testing.T) {
 		t.Error("SchedulesByID skipped a retired schedule")
 	}
 
+	// A year of roster names the same few schedules over and over.
+	repeated := make([]int64, 70000)
+	for i := range repeated {
+		repeated[i] = schedule.ID
+	}
+	if byID, err := s.repo.SchedulesByID(ctx, repeated); err != nil || len(byID) != 1 {
+		t.Errorf("SchedulesByID with 70000 repeated ids = %v, %v; want the one schedule", byID, err)
+	}
+
 	empty, err := s.repo.SchedulesByID(ctx, nil)
 	if err != nil || len(empty) != 0 {
 		t.Errorf("SchedulesByID(nil) = %v, %v", empty, err)
