@@ -122,6 +122,97 @@ func TestWhosInFaults(t *testing.T) {
 	}
 }
 
+func TestDaily(t *testing.T) {
+	s := newServer(t)
+	office := s.hours(t, 8*60, 17*60, 0)
+	s.db.Exec("UPDATE work_schedules SET observes_holidays = true, workdays = '{1,2,3,4,5}' WHERE id = ?", office.ID)
+	night := s.hours(t, 22*60, 6*60, 0)
+	monday, tuesday, wednesday, thursday := date(2030, 3, 4), date(2030, 3, 5), date(2030, 3, 6), date(2030, 3, 7)
+	s.holiday(t, tuesday, "Hari Raya Nyepi")
+
+	lead := s.person(t, middleware.RoleSupervisor, nil, nil)
+	developer := s.person(t, middleware.RoleEmployee, &lead.UserID, &office.ID)
+	guard := s.person(t, middleware.RoleEmployee, &lead.UserID, &night.ID)
+	joiner := s.person(t, middleware.RoleEmployee, &lead.UserID, &office.ID)
+	inactive := s.person(t, middleware.RoleEmployee, &lead.UserID, &office.ID)
+	leaver := s.person(t, middleware.RoleEmployee, &lead.UserID, &office.ID)
+	outsider := s.person(t, middleware.RoleEmployee, nil, &office.ID)
+	s.db.Exec("UPDATE users SET join_date = ? WHERE id = ?", wednesday, joiner.UserID)
+	s.db.Exec("UPDATE users SET is_active = false WHERE id = ?", inactive.UserID)
+	// Removed on Tuesday morning in Jakarta, still Monday in UTC: Tuesday is their last day.
+	s.db.Exec("UPDATE users SET deleted_at = ? WHERE id = ?", local(2030, 3, 5, 6, 0), leaver.UserID)
+
+	s.checkedIn(t, developer.UserID, monday, local(2030, 3, 4, 8, 0), &office.ID)
+	s.onLeave(t, developer.UserID, wednesday, wednesday, "approved")
+	s.rostered(t, guard.UserID, thursday, nil)
+
+	clockAt(t, local(2030, time.March, 10, 12, 0))
+	span := schedule.Range{From: monday, To: thursday}
+	days, err := s.svc.Daily(t.Context(), lead, span, Filter{})
+	if err != nil {
+		t.Fatalf("Daily: %v", err)
+	}
+
+	want := map[dayKey]Status{
+		keyOf(developer.UserID, monday):    StatusPresent,
+		keyOf(developer.UserID, tuesday):   StatusHoliday,
+		keyOf(developer.UserID, wednesday): StatusOnLeave,
+		keyOf(developer.UserID, thursday):  StatusAbsent,
+		keyOf(guard.UserID, monday):        StatusAbsent,
+		keyOf(guard.UserID, tuesday):       StatusAbsent, // the guard's schedule works through holidays
+		keyOf(guard.UserID, wednesday):     StatusAbsent,
+		keyOf(guard.UserID, thursday):      StatusOff, // rostered off, not absent
+		keyOf(joiner.UserID, wednesday):    StatusAbsent,
+		keyOf(joiner.UserID, thursday):     StatusAbsent,
+		keyOf(inactive.UserID, monday):     StatusAbsent,
+		keyOf(inactive.UserID, tuesday):    StatusHoliday,
+		keyOf(inactive.UserID, wednesday):  StatusAbsent,
+		keyOf(inactive.UserID, thursday):   StatusAbsent,
+	}
+	got := statuses(days)
+	if len(got) != len(want) || len(days) != len(want) {
+		t.Errorf("got %d days, want %d: the subtree's, from each join date, without the removed: %+v",
+			len(days), len(want), days)
+	}
+	for key, status := range want {
+		if got[key] != status {
+			t.Errorf("user %d on %s: status = %q, want %q", key.userID, time.Unix(key.date, 0).UTC(), got[key], status)
+		}
+	}
+	if days[0].Attendance == nil || days[0].UserID != developer.UserID || !days[0].Date.Equal(monday) {
+		t.Errorf("first day = %+v, want the developer's Monday with its attendance", days[0])
+	}
+
+	// hr_admin reaches the removed and the outsider, and the filters narrow to one person or department.
+	admin := s.person(t, middleware.RoleHRAdmin, nil, nil)
+	removed, err := s.svc.Daily(t.Context(), admin, span, Filter{UserID: &leaver.UserID})
+	if err != nil || len(removed) != 2 || !removed[1].Date.Equal(tuesday) {
+		t.Errorf("Daily for the removed = %+v, %v; want Monday and Tuesday", removed, err)
+	}
+	var department int64
+	s.db.Raw("INSERT INTO departments (name) VALUES (?) RETURNING id", unique("department")).Scan(&department)
+	t.Cleanup(func() {
+		s.db.Exec("UPDATE users SET department_id = NULL WHERE department_id = ?", department)
+		s.db.Exec("DELETE FROM departments WHERE id = ?", department)
+	})
+	s.db.Exec("UPDATE users SET department_id = ? WHERE id = ?", department, outsider.UserID)
+	inDepartment, err := s.svc.Daily(t.Context(), admin, span, Filter{DepartmentID: &department})
+	if err != nil || len(inDepartment) != 4 || inDepartment[0].UserID != outsider.UserID {
+		t.Errorf("Daily for one department = %+v, %v; want the outsider's four days", inDepartment, err)
+	}
+
+	if _, err := s.svc.Daily(t.Context(), developer, span, Filter{}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("an employee: err = %v, want ErrForbidden", err)
+	}
+	backwards := schedule.Range{From: thursday, To: monday}
+	if _, err := s.svc.Daily(t.Context(), lead, backwards, Filter{}); !apperr.IsValidation(err) {
+		t.Errorf("a backwards range: err = %v, want a validation error", err)
+	}
+	if _, err := s.failing(t, "users").Daily(t.Context(), lead, span, Filter{}); !errors.Is(err, errInjected) {
+		t.Errorf("users failing: err = %v, want the injected failure", err)
+	}
+}
+
 func TestStanding(t *testing.T) {
 	hours := &schedule.WorkSchedule{StartTime: 8 * 60, EndTime: 17 * 60, GraceMinutes: 15}
 	working := schedule.Day{Date: date(2030, time.March, 4), Working: true, Schedule: hours}
@@ -141,6 +232,14 @@ func TestStanding(t *testing.T) {
 			t.Errorf("%s: standing = %q, want %q", name, got, test.want)
 		}
 	}
+}
+
+func statuses(presences []Presence) map[dayKey]Status {
+	byDay := make(map[dayKey]Status, len(presences))
+	for _, presence := range presences {
+		byDay[keyOf(presence.UserID, presence.Date)] = presence.Status
+	}
+	return byDay
 }
 
 func listed(presences []Presence, userID int64) bool {

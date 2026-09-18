@@ -127,7 +127,8 @@ func TestNewRouterRejectsABadSeedAdmin(t *testing.T) {
 func TestProtectedRouteWithoutTokenIs401(t *testing.T) {
 	router := newTestRouter(t, testConfig(), newTestDeps(t))
 
-	paths := []string{"/me", "/users", "/departments", "/attendance/whos-in?date=2030-03-04", "/leaves/me"}
+	paths := []string{"/me", "/users", "/departments", "/attendance/whos-in?date=2030-03-04", "/leaves/me",
+		"/reports/attendance?from=2030-03-04&to=2030-03-04"}
 	for _, path := range paths {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

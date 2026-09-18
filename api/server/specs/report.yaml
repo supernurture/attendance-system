@@ -1,0 +1,271 @@
+openapi: 3.0.3
+info:
+  title: Report API
+  description: |
+    Where everyone stands on every date of a range (rule B), and each person's totals, as JSON, CSV, or a PDF
+    summary. All three are built from the same rows, so their numbers match. A supervisor sees their subtree,
+    hr_admin everyone.
+  version: 1.0.0
+tags:
+  - name: report
+security:
+  - bearerAuth: []
+paths:
+  /reports/attendance:
+    get:
+      operationId: getAttendanceReport
+      tags:
+        - report
+      summary: Daily statuses and per-person totals over a range
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/DepartmentID'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: One day per person per date they were employed on, by name then date.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /reports/attendance.csv:
+    get:
+      operationId: getAttendanceReportCsv
+      tags:
+        - report
+      summary: The report's days as CSV
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/DepartmentID'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: A header row, then one row per day, in the JSON's order.
+          headers:
+            Content-Disposition:
+              required: true
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /reports/attendance.pdf:
+    get:
+      operationId: getAttendanceReportPdf
+      tags:
+        - report
+      summary: The report's per-person totals as a PDF
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/DepartmentID'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: One line per person, with the JSON's totals.
+          headers:
+            Content-Disposition:
+              required: true
+              schema:
+                type: string
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    From:
+      name: from
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date
+    To:
+      name: to
+      in: query
+      required: true
+      description: Inclusive; at most 366 days after from.
+      schema:
+        type: string
+        format: date
+    UserID:
+      name: user_id
+      in: query
+      schema:
+        type: integer
+        format: int64
+    DepartmentID:
+      name: department_id
+      in: query
+      schema:
+        type: integer
+        format: int64
+    Status:
+      name: status
+      in: query
+      description: Only the days with this status; the totals then count those days alone.
+      schema:
+        $ref: '#/components/schemas/Status'
+  responses:
+    BadRequest:
+      description: The request breaks a rule; the message says which.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid access token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Reports are for supervisors and up.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Status:
+      type: string
+      description: |
+        present or late with an attendance; otherwise on_leave (approved leave covers the date), holiday, off
+        (not a working day), not_yet (the shift and its grace have not started), or absent.
+      enum:
+        - present
+        - late
+        - on_leave
+        - holiday
+        - 'off'
+        - not_yet
+        - absent
+    AttendanceReport:
+      type: object
+      required:
+        - from
+        - to
+        - days
+        - people
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportDay'
+        people:
+          type: array
+          description: One per person with at least one day listed, in the same order.
+          items:
+            $ref: '#/components/schemas/ReportTotal'
+    ReportDay:
+      type: object
+      required:
+        - user_id
+        - full_name
+        - work_date
+        - status
+        - late_minutes
+        - early_leave_minutes
+        - worked_minutes
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        full_name:
+          type: string
+        department_id:
+          type: integer
+          format: int64
+        work_date:
+          type: string
+          format: date
+        status:
+          $ref: '#/components/schemas/Status'
+        check_in_at:
+          type: string
+          format: date-time
+        check_out_at:
+          type: string
+          format: date-time
+        late_minutes:
+          type: integer
+        early_leave_minutes:
+          type: integer
+        worked_minutes:
+          type: integer
+          description: Whole minutes from check-in to check-out, breaks included; 0 until checked out.
+    ReportTotal:
+      type: object
+      required:
+        - user_id
+        - full_name
+        - present
+        - late
+        - on_leave
+        - absent
+        - worked_minutes
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        full_name:
+          type: string
+        department_id:
+          type: integer
+          format: int64
+        present:
+          type: integer
+          description: Days checked in on time.
+        late:
+          type: integer
+          description: Days checked in late.
+        on_leave:
+          type: integer
+        absent:
+          type: integer
+        worked_minutes:
+          type: integer
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string

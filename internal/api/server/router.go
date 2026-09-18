@@ -12,6 +12,7 @@ import (
 	"attendance-system/internal/api/server/modules/auth"
 	"attendance-system/internal/api/server/modules/health"
 	"attendance-system/internal/api/server/modules/leave"
+	"attendance-system/internal/api/server/modules/report"
 	"attendance-system/internal/api/server/modules/schedule"
 	"attendance-system/internal/api/server/modules/upload"
 	"attendance-system/internal/api/server/modules/user"
@@ -19,6 +20,7 @@ import (
 	authcontract "attendance-system/internal/api/server/oapicodegen/auth"
 	healthcontract "attendance-system/internal/api/server/oapicodegen/health"
 	leavecontract "attendance-system/internal/api/server/oapicodegen/leave"
+	reportcontract "attendance-system/internal/api/server/oapicodegen/report"
 	schedulecontract "attendance-system/internal/api/server/oapicodegen/schedule"
 	uploadcontract "attendance-system/internal/api/server/oapicodegen/upload"
 	usercontract "attendance-system/internal/api/server/oapicodegen/user"
@@ -88,13 +90,15 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 	uploadHandler := upload.NewHandler(upload.NewService(deps.Storage))
 	uploadcontract.RegisterHandlers(protected,
 		uploadcontract.NewStrictHandlerWithOptions(uploadHandler, nil, uploadOptions))
-	attendanceHandler := attendance.NewHandler(
-		attendance.NewService(db, deps.Storage, zone, cfg.Attendance.GeofenceEnforce))
+	attendanceSvc := attendance.NewService(db, deps.Storage, zone, cfg.Attendance.GeofenceEnforce)
+	attendanceHandler := attendance.NewHandler(attendanceSvc)
 	attendancecontract.RegisterHandlers(protected,
 		attendancecontract.NewStrictHandlerWithOptions(attendanceHandler, nil, attendanceOptions))
 	leaveHandler := leave.NewHandler(leave.NewService(db, deps.Storage, zone))
 	leavecontract.RegisterHandlers(protected,
 		leavecontract.NewStrictHandlerWithOptions(leaveHandler, nil, leaveOptions))
+	reportcontract.RegisterHandlers(protected, reportcontract.NewStrictHandlerWithOptions(
+		report.NewHandler(report.NewService(attendanceSvc)), nil, reportOptions))
 	return nil
 }
 
@@ -128,6 +132,9 @@ var (
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 	leaveOptions = leavecontract.StrictGinServerOptions{
+		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
+	}
+	reportOptions = reportcontract.StrictGinServerOptions{
 		RequestErrorHandlerFunc: badRequest, HandlerErrorFunc: internalError, ResponseErrorHandlerFunc: internalError,
 	}
 )

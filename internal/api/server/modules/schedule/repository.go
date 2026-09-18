@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -341,8 +342,10 @@ func (r *Repository) DefaultScheduleID(ctx context.Context, userID int64) (*int6
 }
 
 // SchedulesByID loads the schedules rule A will need, deleted ones included: a roster row or a
-// default may still point at a schedule that was retired.
+// default may still point at a schedule that was retired. Duplicates are dropped first: a year of roster
+// repeats a few ids tens of thousands of times, past the 65535 parameters Postgres takes.
 func (r *Repository) SchedulesByID(ctx context.Context, ids []int64) (map[int64]WorkSchedule, error) {
+	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
 	byID := make(map[int64]WorkSchedule, len(ids))
 	if len(ids) == 0 {
 		return byID, nil

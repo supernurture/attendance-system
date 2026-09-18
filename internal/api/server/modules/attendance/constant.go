@@ -7,7 +7,7 @@ import (
 	"attendance-system/internal/pkg/apperr"
 )
 
-// Status is where one person stands on one date, as whos-in reports it.
+// Status is where one person stands on one date, as whos-in and the reports resolve it (rule B).
 type Status string
 
 const (

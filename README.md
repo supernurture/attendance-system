@@ -12,8 +12,8 @@ Built incrementally, one reviewed phase at a time. **Done:** skeleton, migration
 uploads, the employee directory (users, the manager hierarchy, departments, role grants in
 `audit_logs`), work schedules and the roster, attendance (check-in/out with a selfie and GPS, the
 daily report, who's in, and corrections approved up the hierarchy), and leave: the 11 statutory
-leave types, yearly quotas, approval up the hierarchy, and attachments. **Still to come:** reports
-(JSON, CSV, PDF).
+leave types, yearly quotas, approval up the hierarchy, and attachments, and reports: daily statuses
+and per-person totals over a range as JSON, CSV, or a PDF summary.
 
 Live endpoints, all specified in `api/server/specs/`:
 
@@ -26,6 +26,7 @@ Live endpoints, all specified in `api/server/specs/`:
 | Attendance | `POST /attendance/{check-in,check-out}`, `GET /attendance/me`, `PUT /attendance/me/daily-report`, `GET /attendance/{id}/photo/{in,out}`, `GET /attendance/whos-in` |
 | Corrections | `POST /attendance/corrections`, `GET /attendance/corrections/{me,pending}`, `DELETE /attendance/corrections/{id}`, `POST /attendance/corrections/{id}/decision` |
 | Leave | `POST /leaves`, `GET /leaves/{me,pending}`, `GET /leaves/me/balance`, `DELETE /leaves/{id}`, `POST /leaves/{id}/decision`, `GET /leaves/{id}/attachment`, `/leave-types` and `/leave-types/{id}`, `POST /leave-balances` |
+| Reports | `GET /reports/attendance`, `GET /reports/attendance.csv`, `GET /reports/attendance.pdf` |
 
 Who sees whom follows `manager_id`: a supervisor reaches their own subtree, hr_admin and
 super_admin reach everyone, and only super_admin grants roles.
@@ -109,3 +110,6 @@ CI sets `POSTGRES_TEST_REQUIRED` and `STORAGE_TEST_REQUIRED` so a skip there bec
 - Every leave type keeps its own balance, summed from the requests themselves and never stored, so
   special leave never reduces annual leave (Article 93 of the Manpower Act) and a rejected or
   cancelled request gives its days back. Only working days count, by the employee's own schedule.
+- Reports resolve every person on every date the same way who's in does: present or late, then
+  approved leave, then holiday, then a day off, else absent. JSON, CSV and PDF are built from the
+  same rows, so their numbers match.
