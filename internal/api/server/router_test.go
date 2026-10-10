@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	"attendance-system/internal/config"
 	"attendance-system/internal/container"
+	"attendance-system/internal/middleware"
 	"attendance-system/pkg/logger"
 )
 
@@ -160,5 +163,64 @@ func TestInternalErrorDoesNotLeakDetails(t *testing.T) {
 	}
 	if got, want := rec.Body.String(), `{"message":"internal server error"}`; got != want {
 		t.Errorf("body = %s, want %s", got, want)
+	}
+}
+
+func TestUnparsableParamAnswersWithMessage(t *testing.T) {
+	cfg := testConfig()
+	cfg.Auth.JWTSecret = strings.Repeat("fixture-", 5)
+	router := newTestRouter(t, cfg, newTestDeps(t))
+
+	token := middleware.SignAccessToken(
+		[]byte(cfg.Auth.JWTSecret), middleware.Claims{UserID: 1, Role: "employee"}, time.Minute)
+	req := httptest.NewRequest(http.MethodGet, "/users/abc", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"message"`) {
+		t.Fatalf("got %d %s, want 400 with a message", rec.Code, rec.Body)
+	}
+}
+
+func TestOversizedBodyIs413(t *testing.T) {
+	cfg := testConfig()
+	cfg.Server.MaxBodyBytes = 10
+	rec := post(newTestRouter(t, cfg, newTestDeps(t)), "/auth/login", `{"email":"someone@example.com"}`)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("got %d %s, want 413", rec.Code, rec.Body)
+	}
+}
+
+func TestEmptyBodyIsNamed(t *testing.T) {
+	rec := post(newTestRouter(t, testConfig(), newTestDeps(t)), "/auth/login", "")
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "a JSON body is required") {
+		t.Fatalf("got %d %s, want 400 naming the missing body", rec.Code, rec.Body)
+	}
+}
+
+func TestFailureAfterTheDeadlineLeavesTheBodyToTimeout(t *testing.T) {
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil).WithContext(expired)
+
+	internalError(c, errors.New("query cancelled"))
+
+	if c.Writer.Written() || rec.Body.Len() != 0 || len(c.Errors) != 1 {
+		t.Fatalf("written = %v, body = %q, errors = %d; want only the cause recorded so Timeout can answer 504",
+			c.Writer.Written(), rec.Body, len(c.Errors))
+	}
+}
+
+func TestReadyIs503WhileDependenciesAreDown(t *testing.T) {
+	rec := get(t, newTestRouter(t, testConfig(), newTestDeps(t)), "/ready")
+
+	if got, want := rec.Body.String(), `{"condition":"NotReady"}`; rec.Code != http.StatusServiceUnavailable ||
+		strings.TrimSpace(got) != want {
+		t.Fatalf("got %d %s, want 503 %s", rec.Code, got, want)
 	}
 }
