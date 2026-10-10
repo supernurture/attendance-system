@@ -81,13 +81,14 @@ jobs:
           make migrate-up
           make migrate-status
 
-      # quay.io, not Docker Hub: MinIO no longer publishes these images there.
+      # A community build: MinIO's own images on quay.io and Docker Hub stopped being public. Keep in step with compose.yaml.
       - name: Start MinIO
         run: |
           docker rm -f minio >/dev/null 2>&1 || true   # self-hosted runners are not clean
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 \
+            server /data
           for _ in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && ready=1 && break
             sleep 1
@@ -97,8 +98,7 @@ jobs:
             docker logs minio
             exit 1
           fi
-          docker run --rm --network host --entrypoint sh \
-            quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
+          docker exec minio sh -c \
             "mc alias set local http://localhost:9000 minioadmin minioadmin && \
              mc mb --ignore-existing local/attendance"
 
