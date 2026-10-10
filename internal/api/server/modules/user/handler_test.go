@@ -344,19 +344,21 @@ func TestHandlerRefusesAnUnguardedRoute(t *testing.T) {
 
 func TestListUsersTakesLimitAndOffset(t *testing.T) {
 	s := newServer(t)
-	admin := s.addUser(t, middleware.RoleHRAdmin, nil)
-	s.addUser(t, middleware.RoleEmployee, nil)
+	// Paged through one supervisor's reports: the full listing shifts under other packages' parallel tests.
+	boss := s.addUser(t, middleware.RoleSupervisor, nil)
+	s.addUser(t, middleware.RoleEmployee, &boss.ID)
+	s.addUser(t, middleware.RoleEmployee, &boss.ID)
 
-	page := decode[[]usercontract.User](t, s.do(t, http.MethodGet, "/users?limit=1", admin, nil), http.StatusOK)
+	page := decode[[]usercontract.User](t, s.do(t, http.MethodGet, "/users?limit=1", boss, nil), http.StatusOK)
 	if len(page) != 1 {
 		t.Errorf("limit=1 returned %d rows, want 1", len(page))
 	}
 	next := decode[[]usercontract.User](t,
-		s.do(t, http.MethodGet, "/users?limit=1&offset=1", admin, nil), http.StatusOK)
+		s.do(t, http.MethodGet, "/users?limit=1&offset=1", boss, nil), http.StatusOK)
 	if len(next) != 1 || next[0].Id == page[0].Id {
 		t.Errorf("offset=1 returned %+v, want a different row", next)
 	}
-	if rec := s.do(t, http.MethodGet, "/users?limit=501", admin, nil); rec.Code != http.StatusBadRequest {
+	if rec := s.do(t, http.MethodGet, "/users?limit=501", boss, nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("limit=501: status = %d, want 400", rec.Code)
 	}
 }
