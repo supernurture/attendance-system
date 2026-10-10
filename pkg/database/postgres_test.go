@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func TestPgQuote(t *testing.T) {
@@ -32,7 +33,8 @@ func TestNewPostgres(t *testing.T) {
 	t.Cleanup(func() { gormOpen = orig })
 
 	got, err := NewPostgres(
-		"localhost", 2222, "user", "password", "database", "sslmode=require", PoolConfig{MaxOpenConns: 2})
+		"localhost", 2222, "user", "password", "database", "sslmode=require",
+		PoolConfig{MaxOpenConns: 2}, gormlogger.Discard)
 	if err != nil {
 		t.Fatalf("NewPostgres: %v", err)
 	}
@@ -45,20 +47,23 @@ func TestNewPostgres(t *testing.T) {
 
 	mock.ExpectPing().WillReturnError(errors.New("boom"))
 	if _, err := NewPostgres(
-		"localhost", 2222, "user", "password", "database", "sslmode=require", PoolConfig{}); err == nil {
+		"localhost", 2222, "user", "password", "database", "sslmode=require",
+		PoolConfig{}, gormlogger.Discard); err == nil {
 		t.Error("expected ping failure to abort")
 	}
 
 	gormOpen = func(gorm.Dialector, ...gorm.Option) (*gorm.DB, error) { return brokenDB(), nil }
 	if _, err := NewPostgres(
-		"localhost", 2222, "user", "password", "database", "sslmode=require", PoolConfig{}); err == nil {
+		"localhost", 2222, "user", "password", "database", "sslmode=require",
+		PoolConfig{}, gormlogger.Discard); err == nil {
 		t.Error("expected configurePool failure")
 	}
 }
 
 func TestNewPostgresUnreachable(t *testing.T) {
 	if _, err := NewPostgres(
-		"127.0.0.2", 2, "user", "password", "database", "sslmode=disable connect_timeout=2", PoolConfig{}); err == nil {
+		"127.0.0.2", 2, "user", "password", "database", "sslmode=disable connect_timeout=2",
+		PoolConfig{}, gormlogger.Discard); err == nil {
 		t.Fatal("expected connection error")
 	}
 }

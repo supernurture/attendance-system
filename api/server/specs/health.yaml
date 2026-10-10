@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Health API
-  description: Liveness probe for the server.
+  description: Liveness and readiness probes for the server.
   version: 1.0.0
 tags:
   - name: health
@@ -20,6 +20,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GetHealthResponse'
+  /ready:
+    get:
+      operationId: getReady
+      tags:
+        - health
+      summary: Get readiness
+      description: >-
+        Pings the database, Redis and the object store. Point a readiness probe here and a liveness probe
+        at /health, so a dependency outage takes the instance out of rotation instead of restarting it.
+      responses:
+        '200':
+          description: Every dependency answered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetReadyResponse'
+        '503':
+          description: >-
+            At least one dependency did not answer. Which one is logged, not returned, so the
+            response does not map the infrastructure for an outside caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetReadyResponse'
 components:
   schemas:
     GetHealthResponse:
@@ -31,3 +55,12 @@ components:
           type: string
           description: Health condition of the server.
           example: Healthy
+    GetReadyResponse:
+      type: object
+      required:
+        - condition
+      properties:
+        condition:
+          type: string
+          description: Readiness condition of the server.
+          example: Ready

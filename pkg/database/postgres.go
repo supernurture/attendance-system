@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var gormOpen = gorm.Open
@@ -19,9 +20,10 @@ func PostgresDSN(host string, port int, user, password, database, opts string) s
 		pgQuote(host), port, pgQuote(user), pgQuote(password), pgQuote(database), opts)
 }
 
-// NewPostgres opens a pooled GORM connection to a PostgreSQL database and pings it.
+// NewPostgres opens a pooled GORM connection to a PostgreSQL database, logging through queryLog, and pings it.
 func NewPostgres(
 	host string, port int, user string, password string, database string, opts string, pool PoolConfig,
+	queryLog gormlogger.Interface,
 ) (*gorm.DB, error) {
 	if warning := TLSWarning(opts); warning != "" {
 		log.Printf("warning: PostgreSQL connection to %s:%d %s (opts=%q)\n", host, port, warning, opts)
@@ -29,7 +31,7 @@ func NewPostgres(
 
 	db, err := gormOpen(postgres.Open(
 		PostgresDSN(host, port, user, password, database, opts),
-	), &gorm.Config{Logger: gormLogger})
+	), &gorm.Config{Logger: queryLog})
 	if err != nil {
 		return nil, err
 	}

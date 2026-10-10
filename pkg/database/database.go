@@ -2,22 +2,10 @@ package database
 
 import (
 	"context"
-	"log"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-)
-
-var gormLogger = logger.New(
-	log.New(log.Writer(), "\r\n", log.LstdFlags),
-	logger.Config{
-		SlowThreshold:             200 * time.Millisecond,
-		LogLevel:                  logger.Warn,
-		ParameterizedQueries:      true,
-		IgnoreRecordNotFoundError: true,
-	},
 )
 
 // PoolConfig holds connection-pool settings; a zero value keeps the driver default.
@@ -75,6 +63,7 @@ func configurePool(db *gorm.DB, pool PoolConfig) error {
 	return nil
 }
 
+// ping bounds the startup check and closes the pool when it fails, so a refused start leaks no connections.
 func ping(db *gorm.DB) error {
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -83,5 +72,9 @@ func ping(db *gorm.DB) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return sqlDB.PingContext(ctx)
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
+		return err
+	}
+	return nil
 }

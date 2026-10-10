@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -76,29 +78,38 @@ func register(router gin.IRouter, cfg *config.Config, deps *container.Container)
 		return err
 	}
 
-	healthcontract.RegisterHandlers(router,
-		healthcontract.NewStrictHandlerWithOptions(health.NewHandler(), nil, healthOptions))
-	authcontract.RegisterHandlers(router,
-		authcontract.NewStrictHandlerWithOptions(auth.NewHandler(authSvc), nil, authOptions))
+	healthcontract.RegisterHandlersWithOptions(router,
+		healthcontract.NewStrictHandlerWithOptions(health.NewHandler(deps.Pings(), deps.Logger), nil, healthOptions),
+		healthcontract.GinServerOptions{ErrorHandler: invalidParam})
+	authcontract.RegisterHandlersWithOptions(router,
+		authcontract.NewStrictHandlerWithOptions(auth.NewHandler(authSvc), nil, authOptions),
+		authcontract.GinServerOptions{ErrorHandler: invalidParam})
 
 	protected := router.Group("", middleware.Auth(secret))
-	usercontract.RegisterHandlers(protected,
-		usercontract.NewStrictHandlerWithOptions(user.NewHandler(user.NewService(db, zone)), nil, userOptions))
-	schedulecontract.RegisterHandlers(protected,
+	usercontract.RegisterHandlersWithOptions(protected,
+		usercontract.NewStrictHandlerWithOptions(user.NewHandler(user.NewService(db, zone)), nil, userOptions),
+		usercontract.GinServerOptions{ErrorHandler: invalidParam})
+	schedulecontract.RegisterHandlersWithOptions(protected,
 		schedulecontract.NewStrictHandlerWithOptions(
-			schedule.NewHandler(schedule.NewService(db, zone)), nil, scheduleOptions))
+			schedule.NewHandler(schedule.NewService(db, zone)), nil, scheduleOptions),
+		schedulecontract.GinServerOptions{ErrorHandler: invalidParam})
 	uploadHandler := upload.NewHandler(upload.NewService(deps.Storage))
-	uploadcontract.RegisterHandlers(protected,
-		uploadcontract.NewStrictHandlerWithOptions(uploadHandler, nil, uploadOptions))
+	uploadcontract.RegisterHandlersWithOptions(protected,
+		uploadcontract.NewStrictHandlerWithOptions(uploadHandler, nil, uploadOptions),
+		uploadcontract.GinServerOptions{ErrorHandler: invalidParam})
 	attendanceSvc := attendance.NewService(db, deps.Storage, zone, cfg.Attendance.GeofenceEnforce)
 	attendanceHandler := attendance.NewHandler(attendanceSvc)
-	attendancecontract.RegisterHandlers(protected,
-		attendancecontract.NewStrictHandlerWithOptions(attendanceHandler, nil, attendanceOptions))
+	attendancecontract.RegisterHandlersWithOptions(protected,
+		attendancecontract.NewStrictHandlerWithOptions(attendanceHandler, nil, attendanceOptions),
+		attendancecontract.GinServerOptions{ErrorHandler: invalidParam})
 	leaveHandler := leave.NewHandler(leave.NewService(db, deps.Storage, zone))
-	leavecontract.RegisterHandlers(protected,
-		leavecontract.NewStrictHandlerWithOptions(leaveHandler, nil, leaveOptions))
-	reportcontract.RegisterHandlers(protected, reportcontract.NewStrictHandlerWithOptions(
-		report.NewHandler(report.NewService(attendanceSvc)), nil, reportOptions))
+	leavecontract.RegisterHandlersWithOptions(protected,
+		leavecontract.NewStrictHandlerWithOptions(leaveHandler, nil, leaveOptions),
+		leavecontract.GinServerOptions{ErrorHandler: invalidParam})
+	reportHandler := report.NewHandler(report.NewService(attendanceSvc))
+	reportcontract.RegisterHandlersWithOptions(protected,
+		reportcontract.NewStrictHandlerWithOptions(reportHandler, nil, reportOptions),
+		reportcontract.GinServerOptions{ErrorHandler: invalidParam})
 	return nil
 }
 
@@ -139,11 +150,29 @@ var (
 	}
 )
 
-func badRequest(c *gin.Context, err error) {
-	c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+// invalidParam answers a path or query parameter that does not parse, in the same shape as every other error.
+func invalidParam(c *gin.Context, err error, status int) {
+	c.JSON(status, gin.H{"message": err.Error()})
 }
 
+// badRequest answers a body the server could not decode: 413 past the size cap, else 400.
+func badRequest(c *gin.Context, err error) {
+	switch tooLarge := (*http.MaxBytesError)(nil); {
+	case errors.As(err, &tooLarge):
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"message": "request body too large"})
+	case errors.Is(err, io.EOF):
+		c.JSON(http.StatusBadRequest, gin.H{"message": "a JSON body is required"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+	}
+}
+
+// internalError keeps the cause for the access log; past the deadline it writes no body, so Timeout answers 504.
 func internalError(c *gin.Context, err error) {
 	_ = c.Error(err)
+	if c.Writer.Written() || c.Request.Context().Err() != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 }

@@ -29,7 +29,7 @@ func checkNewUser(email, password string) (string, error) {
 	email = normalizeEmail(email)
 	switch {
 	case !strings.Contains(email, "@"):
-		return "", apperr.Invalid("email %q is not an email address", email)
+		return "", apperr.Invalid("email is not an email address")
 	case len(email) > 254:
 		return "", apperr.Invalid("email must be at most 254 characters")
 	case len(password) < minPasswordLen:

@@ -181,7 +181,7 @@ func TestHandlerHolidays(t *testing.T) {
 	created := decode[schedulecontract.Holiday](t,
 		s.do(t, http.MethodPost, "/holidays", admin, body), http.StatusCreated)
 	s.trackHoliday(Holiday{ID: created.Id})
-	if !created.Date.Time.Equal(date) {
+	if !created.Date.Equal(date) {
 		t.Errorf("date = %s, want %s", created.Date.Time, date)
 	}
 

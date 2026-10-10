@@ -9,6 +9,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func mockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
@@ -23,7 +24,7 @@ func mockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	db, err := gorm.Open(postgres.New(postgres.Config{
 		Conn:                 sqlDB,
 		PreferSimpleProtocol: true,
-	}), &gorm.Config{Logger: gormLogger, DisableAutomaticPing: true})
+	}), &gorm.Config{Logger: gormlogger.Discard, DisableAutomaticPing: true})
 	if err != nil {
 		t.Fatalf("gorm.Open: %v", err)
 	}
@@ -68,8 +69,13 @@ func TestPing(t *testing.T) {
 
 	wantErr := errors.New("boom")
 	mock.ExpectPing().WillReturnError(wantErr)
+	mock.ExpectClose()
 	if err := ping(db); !errors.Is(err, wantErr) {
 		t.Errorf("ping error = %v, want %v", err, wantErr)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("a failed ping should close the pool: %v", err)
 	}
 
 	if err := ping(brokenDB()); err == nil {

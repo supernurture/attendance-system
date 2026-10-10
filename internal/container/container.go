@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -47,14 +48,27 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	return deps, nil
 }
 
-// Close unwinds every hook in reverse, continuing past failures.
+// Close unwinds every hook in reverse, continuing past failures. Calling it again is a no-op.
 func (c *Container) Close() error {
 	var errs []error
 	for x := len(c.shutdowns) - 1; x >= 0; x-- {
 		errs = append(errs, c.shutdowns[x]())
 	}
+	c.shutdowns = nil
 
 	return errors.Join(errs...)
+}
+
+// Pings returns a readiness check per dependency, keyed "<kind>/<name>".
+func (c *Container) Pings() map[string]func(context.Context) error {
+	checks := map[string]func(context.Context) error{"storage": c.Storage.Ping}
+	for name, conn := range c.Postgres {
+		checks["postgres/"+name] = pingGorm(conn)
+	}
+	for name, client := range c.Redis {
+		checks["redis/"+name] = func(ctx context.Context) error { return client.Ping(ctx).Err() }
+	}
+	return checks
 }
 
 var (
@@ -69,7 +83,7 @@ func (c *Container) open(cfg *config.Config) error {
 			MaxOpenConns:    db.MaxOpenConns,
 			MaxIdleConns:    db.MaxIdleConns,
 			ConnMaxLifetime: db.ConnMaxLifetime,
-		})
+		}, gormLog{c.Logger})
 		if err != nil {
 			return fmt.Errorf("open postgres %q: %w", name, err)
 		}
@@ -116,6 +130,7 @@ func newLogger(cfg *config.Config) (*logger.Logger, error) {
 		Path:        cfg.Logger.Path,
 		Level:       cfg.Logger.Level,
 		Console:     cfg.Logger.Console,
+		DisableFile: cfg.Logger.DisableFile,
 		Rotation: logger.RotationOptions{
 			Daily:      cfg.Logger.RotationPattern == "daily",
 			MaxSizeMB:  cfg.Logger.RotationSizeMB,
@@ -136,5 +151,15 @@ func closeGorm(conn *gorm.DB) func() error {
 			return err
 		}
 		return sqlDB.Close()
+	}
+}
+
+func pingGorm(conn *gorm.DB) func(context.Context) error {
+	return func(ctx context.Context) error {
+		sqlDB, err := conn.DB()
+		if err != nil {
+			return err
+		}
+		return sqlDB.PingContext(ctx)
 	}
 }

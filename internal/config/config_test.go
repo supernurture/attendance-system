@@ -254,6 +254,13 @@ func TestLoadErrors(t *testing.T) {
 			want: "PresignTTL",
 		},
 		{
+			name: "file logging off with no console to fall back on",
+			files: map[string]string{
+				configFile(): strings.Replace(validConfig, "level: INFO", "level: INFO\n  disable_file: true", 1),
+			},
+			want: "Console",
+		},
+		{
 			name: "timezone no zone database knows",
 			files: map[string]string{
 				configFile(): strings.Replace(validConfig, "Asia/Jakarta", "Mars/Olympus", 1),

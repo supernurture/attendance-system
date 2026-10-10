@@ -245,9 +245,8 @@ func TestRunReportsShutdownTimeout(t *testing.T) {
 
 	port, listener := freePort(t)
 	_ = listener.Close()
-	writeConfig(t, validConfig(port))
-
-	swap(t, &shutdownTimeout, 300*time.Millisecond)
+	writeConfig(t, strings.Replace(
+		validConfig(port), "timeout: 5s", "timeout: 5s\n  shutdown_timeout: 300ms", 1))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
