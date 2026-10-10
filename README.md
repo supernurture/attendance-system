@@ -19,7 +19,7 @@ Live endpoints, all specified in `api/server/specs/`:
 
 | Area | Endpoints |
 |---|---|
-| Health, auth | `GET /health`, `POST /auth/{login,refresh,logout}` |
+| Health, auth | `GET /health`, `GET /ready`, `POST /auth/{login,refresh,logout}` |
 | Directory | `GET /me`, `/users` and `/users/{id}`, `PATCH /users/{id}/role`, `/departments` and `/departments/{id}` |
 | Uploads | `POST /uploads/intent` |
 | Schedules | `GET /me/schedule`, `/work-schedules`, `/holidays`, `/office-locations`, `/shift-assignments` |
@@ -54,7 +54,8 @@ curl localhost:8080/health
 | Command | Purpose |
 |---|---|
 | `make run` | run the API (`APP=migrate` for the other binary) |
-| `make check` | fmt-check + vet + lint + test (exactly what CI runs) |
+| `make check` | fmt-check + vet + lint + test (CI adds the generated-code and vulnerability checks) |
+| `make vuln` | known vulnerabilities in code the app actually calls |
 | `make test` | tests with the race detector |
 | `make cover` | coverage report in the browser |
 | `make fmt` | fix formatting (`check` only verifies) |
@@ -113,3 +114,9 @@ CI sets `POSTGRES_TEST_REQUIRED` and `STORAGE_TEST_REQUIRED` so a skip there bec
 - Reports resolve every person on every date the same way who's in does: present or late, then
   approved leave, then holiday, then a day off, else absent. JSON, CSV and PDF are built from the
   same rows, so their numbers match.
+- `GET /health` is liveness; `GET /ready` pings Postgres, Redis and the object store and answers 503
+  while any is down (which one is in the log, not the response). Point a readiness probe at `/ready`.
+- Logs are JSON, one line per request, carrying `request_id` (also returned as `X-Request-ID`), the
+  caller's `user_id`, and for a refused request the `reason` the client was given. Failed and slow
+  queries carry the same `request_id`, without their values. Set `logger.disable_file: true` to log
+  to stderr only, as a container expects.
