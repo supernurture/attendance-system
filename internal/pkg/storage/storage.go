@@ -52,19 +52,27 @@ func New(cfg Config) (*Storage, error) {
 		o.UsePathStyle = cfg.ForcePathStyle
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), headBucketTimeout)
-	defer cancel()
-	if _, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(cfg.Bucket)}); err != nil {
-		return nil, fmt.Errorf("reach bucket %q at %s: %w", cfg.Bucket, cfg.Endpoint, err)
-	}
-
-	log.Printf("connected to object storage bucket %q at %s\n", cfg.Bucket, cfg.Endpoint)
-	return &Storage{
+	store := &Storage{
 		client:  client,
 		presign: s3.NewPresignClient(client),
 		bucket:  cfg.Bucket,
 		ttl:     cfg.PresignTTL,
-	}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), headBucketTimeout)
+	defer cancel()
+	if err := store.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("reach bucket %q at %s: %w", cfg.Bucket, cfg.Endpoint, err)
+	}
+
+	log.Printf("connected to object storage bucket %q at %s\n", cfg.Bucket, cfg.Endpoint)
+	return store, nil
+}
+
+// Ping HeadBuckets the bucket: it is reachable and the credentials still work.
+func (s *Storage) Ping(ctx context.Context) error {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
+	return err
 }
 
 // PresignedURL is a signed URL and the moment it stops working.

@@ -158,6 +158,62 @@ func TestDefaultChain(t *testing.T) {
 		}
 	})
 
+	t.Run("records the authenticated caller", func(t *testing.T) {
+		dir := t.TempDir()
+		log, err := logger.New(logger.Config{ServiceName: "test", Path: dir})
+		if err != nil {
+			t.Fatalf("logger.New: %v", err)
+		}
+
+		router := gin.New()
+		router.Use(AccessLog(log))
+		router.GET("/me", Auth(testSecret), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		router.GET("/open", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		req := httptest.NewRequest(http.MethodGet, "/me", nil)
+		req.Header.Set("Authorization", "Bearer "+sign(testSecret, time.Minute))
+		do(router, req)
+		do(router, httptest.NewRequest(http.MethodGet, "/open", nil))
+		if err := log.Close(); err != nil {
+			t.Fatalf("log.Close: %v", err)
+		}
+
+		lines := strings.Split(strings.TrimSpace(readLog(t, filepath.Join(dir, "test"))), "\n")
+		if len(lines) != 2 || !strings.Contains(lines[0], `"user_id":42`) || strings.Contains(lines[1], "user_id") {
+			t.Errorf("log = %v, want user_id on the authenticated line only", lines)
+		}
+	})
+
+	t.Run("records why a request was refused, and only a 4xx", func(t *testing.T) {
+		dir := t.TempDir()
+		log, err := logger.New(logger.Config{ServiceName: "test", Path: dir})
+		if err != nil {
+			t.Fatalf("logger.New: %v", err)
+		}
+
+		router := gin.New()
+		router.Use(AccessLog(log))
+		router.GET("/conflict", func(c *gin.Context) {
+			c.JSON(http.StatusConflict, gin.H{"message": "already checked in"})
+		})
+		router.GET("/invalid", func(c *gin.Context) {
+			c.Status(http.StatusBadRequest)
+			_, _ = c.Writer.WriteString(`{"message":"bad date"}`)
+		})
+		router.GET("/ok", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"message": "fine"}) })
+		for _, path := range []string{"/conflict", "/invalid", "/ok"} {
+			do(router, httptest.NewRequest(http.MethodGet, path, nil))
+		}
+		if err := log.Close(); err != nil {
+			t.Fatalf("log.Close: %v", err)
+		}
+
+		lines := strings.Split(strings.TrimSpace(readLog(t, filepath.Join(dir, "test"))), "\n")
+		if len(lines) != 3 || !strings.Contains(lines[0], `"reason":"already checked in"`) ||
+			!strings.Contains(lines[1], `"reason":"bad date"`) || strings.Contains(lines[2], "reason") {
+			t.Errorf("log = %v, want the reason on both refusals and not on the 200", lines)
+		}
+	})
+
 	t.Run("cancels an overrunning request with 504", func(t *testing.T) {
 		recorder := do(router, httptest.NewRequest(http.MethodGet, "/slow", nil))
 		if recorder.Code != http.StatusGatewayTimeout {
@@ -314,6 +370,10 @@ func TestRequestContextUnwrapsTheGinContext(t *testing.T) {
 
 	if got := RequestContext(c); got != req.Context() {
 		t.Errorf("RequestContext(*gin.Context) = %v, want the request's own context", got)
+	}
+	bare, _ := gin.CreateTestContext(httptest.NewRecorder())
+	if got := RequestContext(bare); got != context.Context(bare) {
+		t.Errorf("RequestContext(no request) = %v, want the gin context itself rather than a panic", got)
 	}
 	plain := context.Background()
 	if got := RequestContext(plain); got != plain {

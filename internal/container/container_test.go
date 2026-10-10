@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"attendance-system/internal/config"
 	"attendance-system/internal/pkg/storage"
@@ -22,7 +24,9 @@ func stubOpeners(t *testing.T) {
 	t.Helper()
 
 	postgresOrig, redisOrig, storageOrig := newPostgres, newRedis, newStorage
-	newPostgres = func(string, int, string, string, string, string, database.PoolConfig) (*gorm.DB, error) {
+	newPostgres = func(
+		string, int, string, string, string, string, database.PoolConfig, gormlogger.Interface,
+	) (*gorm.DB, error) {
 		sqlDB, mock, err := sqlmock.New()
 		if err != nil {
 			return nil, err
@@ -82,6 +86,9 @@ func TestCloseUnwindsInReverse(t *testing.T) {
 
 	if got, want := strings.Join(order, ","), "redis,postgres,logger"; got != want {
 		t.Errorf("shutdown order = %q, want %q", got, want)
+	}
+	if again := c.Close(); again != nil || len(order) != 3 {
+		t.Errorf("second Close = %v after %d hooks, want a no-op", again, len(order))
 	}
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("Close error = %v, want it to carry the hook failure", err)
@@ -171,5 +178,43 @@ func TestCloseGorm(t *testing.T) {
 
 	if err := closeGorm(&gorm.DB{Config: &gorm.Config{}})(); err == nil {
 		t.Error("expected an error from a connection with no pool")
+	}
+}
+
+func TestPingsCoverEveryDependency(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	mock.ExpectPing()
+	db, err := gorm.Open(
+		postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}),
+		&gorm.Config{DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatalf("gorm.Open: %v", err)
+	}
+
+	c := &Container{
+		Postgres: map[string]*gorm.DB{"primary": db, "broken": {Config: &gorm.Config{}}},
+		Redis:    map[string]*goredis.Client{"cache": goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"})},
+		Storage:  &storage.Storage{},
+	}
+	checks := c.Pings()
+
+	if len(checks) != 4 || checks["storage"] == nil {
+		t.Fatalf("checks = %v, want postgres, redis and storage", checks)
+	}
+	if err := checks["postgres/primary"](context.Background()); err != nil {
+		t.Errorf("postgres/primary = %v, want the ping to pass", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("postgres was not pinged: %v", err)
+	}
+	if err := checks["postgres/broken"](context.Background()); err == nil {
+		t.Error("postgres/broken = nil, want the missing pool reported")
+	}
+	if err := checks["redis/cache"](context.Background()); err == nil {
+		t.Error("redis/cache = nil, want the unreachable server reported")
 	}
 }

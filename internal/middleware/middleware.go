@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -73,16 +75,19 @@ func RequestIDFrom(ctx context.Context) string {
 
 // RequestContext returns the request's context; gin recycles *gin.Context, so never pass that downstream.
 func RequestContext(ctx context.Context) context.Context {
-	if c, ok := ctx.(*gin.Context); ok {
+	if c, ok := ctx.(*gin.Context); ok && c.Request != nil {
 		return c.Request.Context()
 	}
 	return ctx
 }
 
-// AccessLog logs one line per request: 5xx as error, 4xx as warn, rest as info.
+// AccessLog logs one line per request, with the caller's user_id once Auth passed and a 4xx's message as its reason:
+// 5xx error, 4xx warn, rest info.
 func AccessLog(log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+		writer := &refusalWriter{ResponseWriter: c.Writer}
+		c.Writer = writer
 		c.Next()
 
 		status := c.Writer.Status()
@@ -94,9 +99,16 @@ func AccessLog(log *logger.Logger) gin.HandlerFunc {
 			"latency_ms": time.Since(start).Milliseconds(),
 			"client_ip":  c.ClientIP(),
 		}
+		if claims, ok := ClaimsFrom(c.Request.Context()); ok {
+			fields["user_id"] = claims.UserID
+		}
 
 		if len(c.Errors) > 0 {
 			fields["errors"] = c.Errors.Errors()
+		}
+		var refusal struct{ Message string }
+		if json.Unmarshal(writer.body.Bytes(), &refusal) == nil && refusal.Message != "" {
+			fields["reason"] = refusal.Message
 		}
 
 		switch {
@@ -212,6 +224,30 @@ func MaxBodyBytes(limit int64) gin.HandlerFunc {
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		}
 		c.Next()
+	}
+}
+
+// refusalWriter keeps a 4xx body, whose {"message"} already went to the client, so the access log can say why.
+type refusalWriter struct {
+	gin.ResponseWriter
+	body bytes.Buffer
+}
+
+// Write passes b through, keeping a copy while the status is 4xx.
+func (w *refusalWriter) Write(b []byte) (int, error) {
+	w.keep(b)
+	return w.ResponseWriter.Write(b)
+}
+
+// WriteString passes s through, keeping a copy while the status is 4xx.
+func (w *refusalWriter) WriteString(s string) (int, error) {
+	w.keep([]byte(s))
+	return w.ResponseWriter.WriteString(s)
+}
+
+func (w *refusalWriter) keep(b []byte) {
+	if status := w.Status(); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+		w.body.Write(b)
 	}
 }
 
