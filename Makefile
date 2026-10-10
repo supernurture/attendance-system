@@ -8,10 +8,12 @@ APP  ?= $(firstword $(APPS))
 IMAGE ?= attendance-system
 PORT  ?= 8080
 
-# Pinned: .golangci.yml uses the v1 config format, which v2 does not read.
-GOLANGCI_VERSION ?= 1.64.8
+# Pinned so local and CI agree.
+GOLANGCI_VERSION ?= 2.14.0
+# go run, not a go.mod tool, which would upgrade the app's golang.org/x deps.
+GOVULNCHECK_VERSION ?= 1.8.0
 
-.PHONY: help run test cover cover-gaps vet lint lint-install fmt fmt-check check tidy build build-all clean migrate-up migrate-down migrate-status oapicodegen docker-build docker-run
+.PHONY: help run test cover cover-gaps vet lint lint-install vuln fmt fmt-check check tidy build build-all clean migrate-up migrate-down migrate-status oapicodegen docker-build docker-run
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n", $$1, $$2}'
@@ -46,7 +48,10 @@ lint: ## golangci-lint, configured by .golangci.yml (see lint-install)
 	golangci-lint run
 
 lint-install: ## Install the golangci-lint version .golangci.yml is written for
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v$(GOLANGCI_VERSION)
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_VERSION)
+
+vuln: ## Report known vulnerabilities in code the app actually calls
+	go run golang.org/x/vuln/cmd/govulncheck@v$(GOVULNCHECK_VERSION) ./...
 
 fmt: ## Format and fix imports in place
 	go tool goimports -w .

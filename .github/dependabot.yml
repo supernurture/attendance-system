@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    # Let a freshly published version sit a week before we pick it up.
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: weekly
+    # Conventional commits: the Review workflow's commitlint fails anything else.
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: github-actions
+    directory: /
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+  # Dockerfile base images.
+  - package-ecosystem: docker
+    directory: /
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+  # compose.yaml images.
+  - package-ecosystem: docker-compose
+    directory: /
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    ignore:
+      # 18 moved PGDATA; see compose.yaml.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]

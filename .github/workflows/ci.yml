@@ -26,7 +26,7 @@ jobs:
           POSTGRES_DB: attendance
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U postgres -d attendance"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d attendance"
           --health-interval 5s --health-timeout 3s --health-retries 10
 
     steps:
@@ -49,6 +49,13 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum \
             || { echo "::error::go.mod/go.sum are stale -- run 'make tidy' and commit the result"; exit 1; }
+
+      # Fails when the committed contracts no longer match the specs.
+      - name: Generated code is fresh
+        run: |
+          make oapicodegen
+          stale=$(git status --porcelain -- internal/api/server/oapicodegen)
+          [ -z "$stale" ] || { echo "::error::generated code is stale -- run 'make oapicodegen' and commit the result"; echo "$stale"; exit 1; }
 
       # Keyed on the Makefile so bumping GOLANGCI_VERSION cannot leave a stale binary cached.
       - name: Cache golangci-lint
@@ -101,3 +108,7 @@ jobs:
         env:
           STORAGE_TEST_REQUIRED: "1"
           POSTGRES_TEST_REQUIRED: "1"
+
+      # Fails only on vulnerabilities in code the app calls.
+      - name: Vulnerabilities
+        run: make vuln
