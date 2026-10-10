@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,8 @@ const (
 
 	readTimeout = 15 * time.Second
 	idleTimeout = 60 * time.Second
+
+	defaultShutdownTimeout = 8 * time.Second // under docker stop's 10s grace period
 )
 
 var (
@@ -30,8 +33,6 @@ var (
 	newRouter    = server.NewRouter
 	newContainer = container.NewContainer
 	closeDeps    = func(deps *container.Container) error { return deps.Close() }
-
-	shutdownTimeout = 8 * time.Second
 )
 
 func main() {
@@ -90,6 +91,7 @@ func run(ctx context.Context) (err error) {
 		return fmt.Errorf("serve: %w", serveErr)
 	case <-ctx.Done():
 	}
+	shutdownTimeout := cmp.Or(cfg.Server.ShutdownTimeout, defaultShutdownTimeout)
 	deps.Logger.Info("shutting down", map[string]any{"timeout": shutdownTimeout.String()})
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

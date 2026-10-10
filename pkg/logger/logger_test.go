@@ -150,7 +150,7 @@ func TestReportCallerAddsCaller(t *testing.T) {
 	}
 }
 
-func TestConsoleTeesToStdout(t *testing.T) {
+func TestConsoleTeesToStderr(t *testing.T) {
 	base := t.TempDir()
 
 	log, err := New(Config{ServiceName: "go", Path: base, Console: true})
@@ -279,5 +279,28 @@ func TestCloseWithoutCloser(t *testing.T) {
 
 	if err := log.Close(); err != nil {
 		t.Errorf("Close with a nil closer = %v, want nil", err)
+	}
+}
+
+func TestDisableFileLogsToStderrOnly(t *testing.T) {
+	base := t.TempDir()
+
+	log, err := New(Config{ServiceName: "go", Path: base, Console: true, DisableFile: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	log.Info("stderr only", nil)
+	if err := log.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(base, "go")); !os.IsNotExist(err) {
+		t.Errorf("stat log dir = %v, want no log directory created", err)
+	}
+}
+
+func TestDisableFileNeedsConsole(t *testing.T) {
+	if _, err := New(Config{ServiceName: "go", Path: t.TempDir(), DisableFile: true}); err == nil {
+		t.Error("New = nil error, want a logger with no output refused")
 	}
 }

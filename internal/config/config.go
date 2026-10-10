@@ -46,12 +46,13 @@ type App struct {
 
 // Server holds HTTP server mode, port, request timeout, and middleware settings.
 type Server struct {
-	Mode           string        `mapstructure:"mode"            validate:"required,oneof=test debug release"`
-	Port           int           `mapstructure:"port"            validate:"required,min=1,max=65535"`
-	Timeout        time.Duration `mapstructure:"timeout"         validate:"required,gt=0"`
-	CORSOrigins    []string      `mapstructure:"cors_origins"`
-	TrustedProxies []string      `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
-	MaxBodyBytes   int64         `mapstructure:"max_body_bytes"  validate:"gte=0"`
+	Mode            string        `mapstructure:"mode"            validate:"required,oneof=test debug release"`
+	Port            int           `mapstructure:"port"            validate:"required,min=1,max=65535"`
+	Timeout         time.Duration `mapstructure:"timeout"         validate:"required,gt=0"`
+	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout" validate:"gte=0"`
+	CORSOrigins     []string      `mapstructure:"cors_origins"`
+	TrustedProxies  []string      `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
+	MaxBodyBytes    int64         `mapstructure:"max_body_bytes"  validate:"gte=0"`
 }
 
 // Databases holds every configured datastore, keyed by logical name.
@@ -103,7 +104,8 @@ type Logger struct {
 	RotationPattern string `mapstructure:"rotation_pattern" validate:"omitempty,oneof=daily size"`
 	RotationSizeMB  int    `mapstructure:"rotation_size_mb" validate:"gte=0"`
 	RetentionDays   int    `mapstructure:"retention_days"   validate:"gte=0"`
-	Console         bool   `mapstructure:"console"`
+	Console         bool   `mapstructure:"console"          validate:"required_if=DisableFile true"`
+	DisableFile     bool   `mapstructure:"disable_file"`
 }
 
 const (

@@ -7,6 +7,7 @@ server:
   mode: debug # test, debug, or release
   port: 8080
   timeout: 30s
+  shutdown_timeout: 8s # drain on SIGTERM; keep under the platform grace period
   cors_origins: [] # e.g. ["https://app.example.com"]
   trusted_proxies: [] # e.g. ["10.0.0.0/8"]
   max_body_bytes: 1048576
@@ -62,5 +63,6 @@ logger:
   level: INFO # DEBUG, INFO, WARN, or ERROR
   rotation_pattern: daily # daily, or size-based via rotation_size_mb
   rotation_size_mb: 20
-  retention_days: 1
-  console: true
+  retention_days: 14 # days a rotated log file is kept
+  console: true # also print JSON logs to stderr
+  disable_file: false # true logs to stderr only; needs console

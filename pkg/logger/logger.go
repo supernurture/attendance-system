@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,7 +29,8 @@ type Config struct {
 	Path         string // base log dir, defaults to ./logs
 	Level        string // DEBUG, INFO, WARN, or ERROR (any case); defaults to INFO
 	ReportCaller bool
-	Console      bool // also write JSON logs to stdout
+	Console      bool // also write JSON logs to stderr
+	DisableFile  bool // stderr only; needs Console
 	Rotation     RotationOptions
 }
 
@@ -38,38 +40,27 @@ type Logger struct {
 	closer io.Closer
 }
 
-// New builds a Logger writing to <Path>/<ServiceName>/app-<date>.log.
+// New builds a Logger writing to <Path>/<ServiceName>/app-<date>.log, stderr, or both.
 func New(cfg Config) (*Logger, error) {
-	if cfg.Path == "" {
-		cfg.Path = "./logs" // default log path
+	if cfg.DisableFile && !cfg.Console {
+		return nil, errors.New("logger has no output: enable Console or leave the file on")
 	}
 
-	dir := filepath.Join(cfg.Path, cfg.ServiceName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-
-	rotateOpts := []rotatelogs.Option{rotatelogs.WithLinkName("")}
-	if cfg.Rotation.MaxAgeDays > 0 {
-		rotateOpts = append(
-			rotateOpts, rotatelogs.WithMaxAge(time.Duration(cfg.Rotation.MaxAgeDays)*24*time.Hour))
-	}
-	if cfg.Rotation.Daily {
-		rotateOpts = append(rotateOpts, rotatelogs.WithRotationTime(24*time.Hour))
-	} else if cfg.Rotation.MaxSizeMB > 0 {
-		rotateOpts = append(rotateOpts, rotatelogs.WithRotationSize(int64(cfg.Rotation.MaxSizeMB)*1024*1024))
-	}
-
-	rotator, err := rotatelogs.New(filepath.Join(dir, "app-%Y-%m-%d.log"), rotateOpts...)
-	if err != nil {
-		return nil, err
-	}
 	encoder := zapcore.NewJSONEncoder(encoderConfig())
+	level := parseLevel(cfg.Level)
 
-	cores := []zapcore.Core{
-		zapcore.NewCore(encoder, zapcore.AddSync(rotator), parseLevel(cfg.Level))}
+	var cores []zapcore.Core
+	var closer io.Closer
+	if !cfg.DisableFile {
+		rotator, err := openFile(cfg)
+		if err != nil {
+			return nil, err
+		}
+		cores = append(cores, zapcore.NewCore(encoder, zapcore.AddSync(rotator), level))
+		closer = rotator
+	}
 	if cfg.Console {
-		cores = append(cores, zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), parseLevel(cfg.Level)))
+		cores = append(cores, zapcore.NewCore(encoder, zapcore.AddSync(os.Stderr), level))
 	}
 	core := zapcore.NewTee(cores...)
 
@@ -89,7 +80,7 @@ func New(cfg Config) (*Logger, error) {
 			zap.String("env", cfg.Env),
 			zap.String("host", host),
 		),
-		closer: rotator,
+		closer: closer,
 	}, nil
 }
 
@@ -142,4 +133,28 @@ func zapFields(fields map[string]any) []zap.Field {
 		out = append(out, zap.Any(key, value))
 	}
 	return out
+}
+
+func openFile(cfg Config) (*rotatelogs.RotateLogs, error) {
+	if cfg.Path == "" {
+		cfg.Path = "./logs" // default log path
+	}
+
+	dir := filepath.Join(cfg.Path, cfg.ServiceName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+
+	rotateOpts := []rotatelogs.Option{rotatelogs.WithLinkName("")}
+	if cfg.Rotation.MaxAgeDays > 0 {
+		rotateOpts = append(
+			rotateOpts, rotatelogs.WithMaxAge(time.Duration(cfg.Rotation.MaxAgeDays)*24*time.Hour))
+	}
+	if cfg.Rotation.Daily {
+		rotateOpts = append(rotateOpts, rotatelogs.WithRotationTime(24*time.Hour))
+	} else if cfg.Rotation.MaxSizeMB > 0 {
+		rotateOpts = append(rotateOpts, rotatelogs.WithRotationSize(int64(cfg.Rotation.MaxSizeMB)*1024*1024))
+	}
+
+	return rotatelogs.New(filepath.Join(dir, "app-%Y-%m-%d.log"), rotateOpts...)
 }
